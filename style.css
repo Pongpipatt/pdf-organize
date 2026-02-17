@@ -1,24 +1,30 @@
-/* Scrollbar Styling */
+/* ตัวแปรรับค่าจาก Zoom Slider */
+:root {
+    --thumb-width: 180px;
+}
+
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 
-/* Thumbnail Container & Items */
 .thumb-item {
-    width: 180px; 
+    width: var(--thumb-width); 
     height: max-content;
+    background-color: #ffffff;
     transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.1s;
     user-select: none;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+    box-shadow: 0 2px 5px rgba(0,0,0,0.08);
+    border: 2px solid #e2e8f0;
+    border-radius: 0.375rem;
+    overflow: hidden;
 }
 
 .thumb-item:hover {
     transform: translateY(-2px);
-    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
 }
 
-/* Active/Selected Thumbnails */
 .thumbnail-active, .sortable-selected {
     border-color: #6366f1 !important; 
     box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.25), 0 10px 15px -3px rgba(0, 0, 0, 0.08) !important;
@@ -26,15 +32,12 @@
     transform: scale(1.02);
 }
 
-/* SortableJS Styles */
 .sortable-ghost { opacity: 0.3; }
 .sortable-drag {
     cursor: grabbing !important;
-    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 10px 10px -5px rgba(0, 0, 0, 0.04) !important;
     transform: scale(1.05) rotate(2deg) !important;
 }
 
-/* Insert Line Marker (Drag and Drop) */
 .insert-marker {
     width: 4px;
     height: 250px;
@@ -45,14 +48,12 @@
     pointer-events: none;
 }
 
-/* Disabled Toolbar Buttons */
 .toolbar-btn:disabled {
     opacity: 0.4;
     cursor: not-allowed;
     color: #94a3b8 !important;
 }
 
-/* Lasso Tool Selection Box */
 .selection-box {
     position: fixed;
     background: rgba(99, 102, 241, 0.15); 
