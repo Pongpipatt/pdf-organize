@@ -1,0 +1,58 @@
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+.thumb-item {
+    width: 180px; 
+    height: max-content;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.1s;
+    user-select: none;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+}
+
+.thumb-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08);
+}
+
+/* สีตอนกระดาษถูกเลือก */
+.thumbnail-active, .sortable-selected {
+    border-color: #6366f1 !important; /* โทน Indigo ทันสมัย */
+    box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.25), 0 10px 15px -3px rgba(0, 0, 0, 0.08) !important;
+    background-color: #e0e7ff;
+    transform: scale(1.02);
+}
+
+.sortable-ghost { opacity: 0.3; }
+.sortable-drag {
+    cursor: grabbing !important;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 10px 10px -5px rgba(0, 0, 0, 0.04) !important;
+    transform: scale(1.05) rotate(2deg) !important;
+}
+
+.insert-marker {
+    width: 4px;
+    height: 250px;
+    background-color: #6366f1;
+    border-radius: 4px;
+    margin: 0 -14px;
+    box-shadow: 0 0 10px rgba(99, 102, 241, 0.6);
+    pointer-events: none;
+}
+
+.toolbar-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    color: #94a3b8 !important;
+}
+
+/* สไตล์ของกล่องลากคลุม (Lasso Tool) */
+.selection-box {
+    position: fixed;
+    background: rgba(99, 102, 241, 0.15); /* สีน้ำเงินอมม่วงโปร่งแสง */
+    border: 1px solid rgba(99, 102, 241, 0.6);
+    pointer-events: none; /* ป้องกันไม่ให้บังเมาส์ตัวเอง */
+    z-index: 50;
+    border-radius: 2px;
+}
