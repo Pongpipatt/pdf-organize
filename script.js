@@ -1,6 +1,7 @@
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
 let rawPdfFiles = {}; 
+let lastSelectedNode = null; // เพิ่มตัวแปรจำว่าคลิกหน้าไหนเป็นหน้าล่าสุด (สำหรับทำ Shift-Click)
 
 const elements = {
     thumbnailsContainer: document.getElementById('thumbnails-container'),
@@ -11,12 +12,16 @@ const elements = {
     btnDelete: document.getElementById('btn-delete'),
     btnExport: document.getElementById('btn-export'),
     mainContainer: document.getElementById('main-container'),
-    selectionBox: document.getElementById('selection-box')
+    selectionBox: document.getElementById('selection-box'),
+    loadingOverlay: document.getElementById('loading-overlay'),
+    loadingText: document.getElementById('loading-text'),
+    loadingProgress: document.getElementById('loading-progress')
 };
 
+// เมานท์ปลั๊กอิน Sortable MultiDrag
 try { if (typeof Sortable.MultiDrag !== 'undefined') Sortable.mount(new Sortable.MultiDrag()); } catch (e) {}
 
-// 1. SortableJS
+// 1. Setup SortableJS
 new Sortable(elements.thumbnailsContainer, {
     animation: 150,
     multiDrag: true, 
@@ -24,18 +29,15 @@ new Sortable(elements.thumbnailsContainer, {
     ghostClass: 'sortable-ghost',
     dragClass: 'sortable-drag',
     onEnd: updatePageNumbers,
-    filter: '.selection-box' // ป้องกันการไปจับกล่อง selection
+    filter: '.selection-box' 
 });
 
-// ==========================================
-// 2. ระบบลากคลุมเพื่อเลือก (Lasso Selection)
-// ==========================================
+// 2. Lasso Selection Logic (ลากคลุม)
 let isSelecting = false;
 let startX = 0, startY = 0;
-let initialSelection = new Set(); // เก็บค่าที่เลือกไว้ก่อนลาก (เผื่อกด Ctrl ค้าง)
+let initialSelection = new Set();
 
 elements.thumbnailsContainer.addEventListener('mousedown', (e) => {
-    // จะเริ่มลากคลุมได้ก็ต่อเมื่อคลิกที่ "พื้นหลัง" เท่านั้น (ไม่โดนหน้ากระดาษ)
     if (e.target === elements.thumbnailsContainer || e.target === elements.emptyState) {
         isSelecting = true;
         startX = e.clientX;
@@ -47,14 +49,12 @@ elements.thumbnailsContainer.addEventListener('mousedown', (e) => {
         elements.selectionBox.style.height = '0px';
         elements.selectionBox.classList.remove('hidden');
 
-        // ถ้าไม่ได้กด Ctrl/Cmd ค้างไว้ ให้ล้างการเลือกเก่าทิ้ง
         if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
             document.querySelectorAll('.thumb-item').forEach(el => {
                 el.classList.remove('thumbnail-active', 'sortable-selected');
             });
             initialSelection.clear();
         } else {
-            // จำไว้ว่าก่อนลาก มีแผ่นไหนเลือกไว้บ้าง
             initialSelection = new Set(Array.from(document.querySelectorAll('.thumbnail-active')));
         }
         updateToolStates();
@@ -64,7 +64,6 @@ elements.thumbnailsContainer.addEventListener('mousedown', (e) => {
 window.addEventListener('mousemove', (e) => {
     if (!isSelecting) return;
 
-    // คำนวณขนาดกล่อง
     const currentX = e.clientX;
     const currentY = e.clientY;
     
@@ -80,7 +79,6 @@ window.addEventListener('mousemove', (e) => {
 
     const boxRect = elements.selectionBox.getBoundingClientRect();
 
-    // เช็คว่ากล่องไปโดนหน้ากระดาษแผ่นไหนบ้าง
     document.querySelectorAll('.thumb-item').forEach(thumb => {
         const thumbRect = thumb.getBoundingClientRect();
         const isIntersecting = !(
@@ -92,8 +90,8 @@ window.addEventListener('mousemove', (e) => {
         
         if (isIntersecting) {
             thumb.classList.add('thumbnail-active', 'sortable-selected');
+            lastSelectedNode = thumb; // จำหน้าล่าสุดที่โดนคลุม
         } else {
-            // ถอยกลับไปค่าเดิมตอนก่อนลาก (เผื่อลากไปโดนแล้วลากกลับ)
             if (initialSelection.has(thumb)) {
                 thumb.classList.add('thumbnail-active', 'sortable-selected');
             } else {
@@ -111,9 +109,7 @@ window.addEventListener('mouseup', () => {
     }
 });
 
-// ==========================================
-// 3. ระบบคำนวณตำแหน่งแทรกไฟล์
-// ==========================================
+// 3. Grid Insert Marker (Drag & Drop)
 const insertMarker = document.createElement('div');
 insertMarker.className = 'insert-marker hidden';
 let targetInsertNode = null; 
@@ -158,35 +154,62 @@ elements.mainContainer.addEventListener('drop', (e) => {
 
 document.getElementById('file-input').addEventListener('change', (e) => processFiles(e.target.files, null));
 
-// ==========================================
-// 4. นำเข้าและ Render รูปย่อ
-// ==========================================
+// 4. File Processing with Loading UI
 async function processFiles(files, insertBeforeNode) {
     if(elements.emptyState) elements.emptyState.style.display = 'none';
     const newThumbnails = [];
 
-    for (let file of files) {
-        if (file.type !== 'application/pdf') continue;
-        const arrayBuffer = await file.arrayBuffer();
-        const fileId = 'pdf_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
-        rawPdfFiles[fileId] = arrayBuffer; 
-        
-        const pdf = await pdfjsLib.getDocument(new Uint8Array(arrayBuffer.slice(0))).promise;
+    elements.loadingOverlay.classList.remove('hidden');
+    elements.loadingOverlay.classList.add('flex');
 
-        for (let i = 1; i <= pdf.numPages; i++) {
-            const page = await pdf.getPage(i);
-            const thumbDiv = await createThumbnail(page, fileId, i);
-            newThumbnails.push(thumbDiv);
+    try {
+        for (let file of files) {
+            if (file.type !== 'application/pdf') continue;
+
+            elements.loadingText.innerText = `Reading file: ${file.name}...`;
+            elements.loadingProgress.style.width = '10%';
+            
+            await new Promise(r => setTimeout(r, 10));
+
+            const arrayBuffer = await file.arrayBuffer();
+            const fileId = 'pdf_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+            rawPdfFiles[fileId] = arrayBuffer; 
+            
+            elements.loadingText.innerText = `Parsing PDF structure...`;
+            elements.loadingProgress.style.width = '25%';
+            await new Promise(r => setTimeout(r, 10));
+
+            const pdf = await pdfjsLib.getDocument(new Uint8Array(arrayBuffer.slice(0))).promise;
+            const totalPages = pdf.numPages;
+
+            for (let i = 1; i <= totalPages; i++) {
+                elements.loadingText.innerText = `Extracting page ${i} of ${totalPages}...`;
+                const progressPercent = 25 + ((i / totalPages) * 75); 
+                elements.loadingProgress.style.width = `${progressPercent}%`;
+
+                await new Promise(r => setTimeout(r, 0));
+
+                const page = await pdf.getPage(i);
+                const thumbDiv = await createThumbnail(page, fileId, i);
+                newThumbnails.push(thumbDiv);
+            }
         }
-    }
 
-    newThumbnails.forEach(t => {
-        elements.thumbnailsContainer.insertBefore(t, insertBeforeNode);
-    });
-    updatePageNumbers();
+        newThumbnails.forEach(t => {
+            elements.thumbnailsContainer.insertBefore(t, insertBeforeNode);
+        });
+        updatePageNumbers();
+
+    } catch (error) {
+        console.error("Error loading file:", error);
+        alert("There was an error processing the PDF.");
+    } finally {
+        elements.loadingOverlay.classList.remove('flex');
+        elements.loadingOverlay.classList.add('hidden');
+        elements.loadingProgress.style.width = '0%';
+    }
 }
 
-// สร้าง Thumbnail
 async function createThumbnail(page, fileId, pageIndex) {
     const container = document.createElement('div');
     container.className = 'thumb-item relative cursor-pointer border-2 border-gray-200 bg-white rounded-md overflow-hidden';
@@ -209,17 +232,41 @@ async function createThumbnail(page, fileId, pageIndex) {
     container.appendChild(canvas);
     container.appendChild(badge);
 
-    // คลิกเพื่อเลือก
+    // ★ ระบบคลิกแบบใหม่ (รองรับ Shift-Click)
     container.onclick = (e) => {
-        if (!e.ctrlKey && !e.metaKey) {
-            document.querySelectorAll('.thumb-item').forEach(el => {
-                if(el !== container) {
-                    el.classList.remove('thumbnail-active', 'sortable-selected');
-                }
-            });
+        if (e.shiftKey && lastSelectedNode) {
+            // ถ้ากด Shift ให้เลือกตั้งแต่รูปก่อนหน้า ถึงรูปที่เพิ่งคลิก
+            const allThumbs = Array.from(elements.thumbnailsContainer.querySelectorAll('.thumb-item'));
+            let startIdx = allThumbs.indexOf(lastSelectedNode);
+            let endIdx = allThumbs.indexOf(container);
+            
+            // ป้องกันกรณีหน้าก่อนหน้าถูกลบไปแล้ว
+            if(startIdx === -1) startIdx = endIdx;
+
+            const minIdx = Math.min(startIdx, endIdx);
+            const maxIdx = Math.max(startIdx, endIdx);
+
+            if (!e.ctrlKey && !e.metaKey) {
+                allThumbs.forEach(el => el.classList.remove('thumbnail-active', 'sortable-selected'));
+            }
+
+            for (let i = minIdx; i <= maxIdx; i++) {
+                allThumbs[i].classList.add('thumbnail-active', 'sortable-selected');
+            }
+        } else {
+            // ถ้าไม่ได้กด Shift ก็ทำงานแบบเดิม (คลิกทีละรูป หรือ Ctrl+Click)
+            if (!e.ctrlKey && !e.metaKey) {
+                document.querySelectorAll('.thumb-item').forEach(el => {
+                    if(el !== container) {
+                        el.classList.remove('thumbnail-active', 'sortable-selected');
+                    }
+                });
+            }
+            container.classList.toggle('thumbnail-active');
+            container.classList.toggle('sortable-selected'); 
         }
-        container.classList.toggle('thumbnail-active');
-        container.classList.toggle('sortable-selected'); 
+        
+        lastSelectedNode = container; // จำหน้าล่าสุดไว้ใช้ตอน Shift รอบหน้า
         updateToolStates();
     };
 
@@ -246,9 +293,7 @@ function updateToolStates() {
     elements.btnDelete.disabled = !hasSelected;
 }
 
-// ==========================================
-// 5. จัดการ หมุน, ลบ, Export (เปลี่ยน Text เป็นภาษาอังกฤษ)
-// ==========================================
+// 5. PDF Actions: Rotate, Delete, Export
 async function actionOnSelected(actionFunc) {
     const selected = document.querySelectorAll('.thumbnail-active');
     if (selected.length === 0) return;
@@ -285,8 +330,19 @@ async function rotatePage(thumb, degrees) {
     await page.render({ canvasContext: thumbCanvas.getContext('2d'), viewport: thumbViewport }).promise;
 }
 
+// ★ ปรับปรุงระบบลบ ให้มี Popup ถามยืนยัน
 elements.btnDelete.onclick = () => {
     const selected = document.querySelectorAll('.thumbnail-active');
+    if (selected.length === 0) return;
+
+    // คำนวณข้อความแจ้งเตือนให้สอดคล้องกับจำนวนกระดาษ
+    const confirmMessage = selected.length > 1 
+        ? `Are you sure you want to delete ${selected.length} pages?` 
+        : `Are you sure you want to delete this page?`;
+
+    // ถ้ากด ยกเลิก (Cancel) ให้ออกจากฟังก์ชันทันที
+    if (!confirm(confirmMessage)) return;
+
     selected.forEach(thumb => thumb.remove());
     updatePageNumbers();
     
@@ -294,6 +350,17 @@ elements.btnDelete.onclick = () => {
         if(elements.emptyState) elements.emptyState.style.display = 'flex';
     }
 };
+
+// ★ เพิ่มระบบกดปุ่ม Delete หรือ Backspace บนคีย์บอร์ด
+window.addEventListener('keydown', (e) => {
+    // ป้องกันการลบเวลามี Popup แจ้งเตือนค้างอยู่
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+        const selected = document.querySelectorAll('.thumbnail-active');
+        if (selected.length > 0) {
+            elements.btnDelete.click(); // สั่งให้เหมือนเอานิ้วไปกดปุ่มถังขยะ
+        }
+    }
+});
 
 elements.btnExport.onclick = async () => {
     const thumbs = elements.thumbnailsContainer.querySelectorAll('.thumb-item');
