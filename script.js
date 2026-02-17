@@ -57,7 +57,7 @@ window.addEventListener('wheel', (e) => {
     }
 }, { passive: false });
 
-// 1. Setup SortableJS
+// 1. Setup SortableJS (เขียน Custom เพื่อแก้บั๊ก MultiDrag)
 new Sortable(elements.thumbnailsContainer, {
     animation: 150,
     ghostClass: 'sortable-ghost',
@@ -78,7 +78,6 @@ new Sortable(elements.thumbnailsContainer, {
         if (selected.length > 1) {
             const badge = document.createElement('div');
             badge.id = 'drag-badge';
-            // ★ เปลี่ยน CSS ให้ป้ายมาอยู่ตรงกลางกระดาษ และขยายขนาดให้อ่านง่ายขึ้น ★
             badge.className = 'absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-rose-500 text-white text-sm font-bold px-4 py-2 flex items-center justify-center rounded-full z-50 shadow-xl border-2 border-white pointer-events-none whitespace-nowrap';
             badge.innerHTML = `<i class="fa-solid fa-copy mr-2"></i> ${selected.length} Pages`;
             item.appendChild(badge);
@@ -111,7 +110,7 @@ new Sortable(elements.thumbnailsContainer, {
     }
 });
 
-// 2. Lasso Selection Logic
+// 2. Lasso Selection
 let isSelecting = false;
 let startX = 0, startY = 0;
 let initialSelection = new Set();
@@ -235,7 +234,7 @@ elements.mainContainer.addEventListener('drop', (e) => {
 
 document.getElementById('file-input').addEventListener('change', (e) => processFiles(e.target.files, null));
 
-// 4. File Processing
+// 4. File Processing with Loading UI
 async function processFiles(files, insertBeforeNode) {
     if(elements.emptyState) elements.emptyState.style.display = 'none';
     const newThumbnails = [];
@@ -306,6 +305,7 @@ async function createThumbnail(page, fileId, pageIndex) {
     const container = document.createElement('div');
     container.className = 'thumb-item relative cursor-pointer border-2 border-gray-200 bg-white rounded-md overflow-hidden';
     
+    // สำคัญ: เก็บค่า originalPageIndex เสมอ
     container.dataset.fileId = fileId;
     container.dataset.originalPageIndex = pageIndex; 
     container.dataset.pageIndex = pageIndex;
@@ -449,6 +449,7 @@ elements.btnDelete.onclick = () => {
 };
 
 window.addEventListener('keydown', (e) => {
+    // ป้องกันการลบกระดาษตอนที่กำลังพิมพ์ชื่อไฟล์
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
     if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -459,6 +460,7 @@ window.addEventListener('keydown', (e) => {
     }
 });
 
+// Export PDF โดยใช้ originalPageIndex
 elements.btnExport.onclick = async () => {
     const thumbs = elements.thumbnailsContainer.querySelectorAll('.thumb-item');
     if (thumbs.length === 0) return alert('No pages to export.');
