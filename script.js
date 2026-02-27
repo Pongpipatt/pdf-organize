@@ -12,6 +12,7 @@ const elements = {
     btnRotateRight: document.getElementById('btn-rotate-right'),
     btnDelete: document.getElementById('btn-delete'),
     btnExport: document.getElementById('btn-export'),
+    btnExtract: document.getElementById('btn-extract'), // 🌟 เพิ่มปุ่ม Extract
     mainContainer: document.getElementById('main-container'),
     selectionBox: document.getElementById('selection-box'),
     loadingOverlay: document.getElementById('loading-overlay'),
@@ -57,7 +58,7 @@ window.addEventListener('wheel', (e) => {
     }
 }, { passive: false });
 
-// 1. Setup SortableJS (เขียน Custom เพื่อแก้บั๊ก MultiDrag)
+// 1. Setup SortableJS
 new Sortable(elements.thumbnailsContainer, {
     animation: 150,
     ghostClass: 'sortable-ghost',
@@ -305,7 +306,6 @@ async function createThumbnail(page, fileId, pageIndex) {
     const container = document.createElement('div');
     container.className = 'thumb-item relative cursor-pointer border-2 border-gray-200 bg-white rounded-md overflow-hidden';
     
-    // สำคัญ: เก็บค่า originalPageIndex เสมอ
     container.dataset.fileId = fileId;
     container.dataset.originalPageIndex = pageIndex; 
     container.dataset.pageIndex = pageIndex;
@@ -382,6 +382,7 @@ function updateToolStates() {
     elements.btnRotateLeft.disabled = !hasSelected;
     elements.btnRotateRight.disabled = !hasSelected;
     elements.btnDelete.disabled = !hasSelected;
+    elements.btnExtract.disabled = !hasSelected; // 🌟 เปิด/ปิด ปุ่ม Extract
 }
 
 // 5. PDF Actions: Rotate, Delete, Export
@@ -392,6 +393,7 @@ async function actionOnSelected(actionFunc) {
     elements.btnRotateLeft.disabled = true;
     elements.btnRotateRight.disabled = true;
     elements.btnDelete.disabled = true;
+    elements.btnExtract.disabled = true;
 
     for (let thumb of selected) {
         await actionFunc(thumb);
@@ -449,7 +451,6 @@ elements.btnDelete.onclick = () => {
 };
 
 window.addEventListener('keydown', (e) => {
-    // ป้องกันการลบกระดาษตอนที่กำลังพิมพ์ชื่อไฟล์
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
     if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -460,7 +461,60 @@ window.addEventListener('keydown', (e) => {
     }
 });
 
-// Export PDF โดยใช้ originalPageIndex
+// 🌟 ฟังก์ชันแยกเฉพาะหน้าที่เลือก (Extract Selected) 🌟
+elements.btnExtract.onclick = async () => {
+    const selected = document.querySelectorAll('.thumbnail-active');
+    if (selected.length === 0) return;
+
+    const originalIcon = elements.btnExtract.innerHTML;
+    elements.btnExtract.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+    elements.btnExtract.disabled = true;
+
+    try {
+        const { PDFDocument } = PDFLib;
+        const newPdf = await PDFDocument.create();
+        const cachedPdfLibDocs = {}; 
+
+        for (let thumb of selected) {
+            const fileId = thumb.dataset.fileId;
+            const originalPageIndex = parseInt(thumb.dataset.originalPageIndex);
+            const pageIndex = originalPageIndex - 1; 
+            const rotation = parseInt(thumb.dataset.rotation);
+
+            if (!cachedPdfLibDocs[fileId]) {
+                cachedPdfLibDocs[fileId] = await PDFDocument.load(rawPdfFiles[fileId].slice(0));
+            }
+
+            const [copiedPage] = await newPdf.copyPages(cachedPdfLibDocs[fileId], [pageIndex]);
+            copiedPage.setRotation(PDFLib.degrees(rotation));
+            newPdf.addPage(copiedPage);
+        }
+
+        const pdfBytes = await newPdf.save();
+        const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        
+        // เติมคำว่า _Extracted ต่อท้ายชื่อไฟล์เดิม เพื่อให้รู้ว่าเป็นไฟล์ที่แยกออกมา
+        let baseName = elements.filenameInput.value.trim() || 'My_Organized_Document';
+        if (baseName.toLowerCase().endsWith('.pdf')) {
+            baseName = baseName.slice(0, -4); 
+        }
+        
+        a.href = url;
+        a.download = `${baseName}_Extracted.pdf`;
+        a.click();
+        URL.revokeObjectURL(url);
+    } catch (error) {
+        console.error("Extract Error:", error);
+        alert('Error extracting pages: ' + error.message);
+    } finally {
+        elements.btnExtract.innerHTML = originalIcon;
+        elements.btnExtract.disabled = false;
+    }
+};
+
+// Export PDF (โหมดปกติ โหลดทุกหน้าบนจอ)
 elements.btnExport.onclick = async () => {
     const thumbs = elements.thumbnailsContainer.querySelectorAll('.thumb-item');
     if (thumbs.length === 0) return alert('No pages to export.');

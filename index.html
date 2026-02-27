@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PDF Organizer</title>
-    <link rel="icon" href="favicon.png" type="image/png">
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="style.css">
@@ -25,6 +24,9 @@
             </div>
             
             <div class="border-l border-gray-300 pl-4 ml-2 flex space-x-2">
+                <button id="btn-extract" class="toolbar-btn text-gray-600 hover:text-emerald-600 hover:bg-emerald-50 p-2 rounded transition" title="Extract Selected Pages" disabled>
+                    <i class="fa-solid fa-file-export"></i>
+                </button>
                 <button id="btn-rotate-left" class="toolbar-btn text-gray-600 hover:text-indigo-600 hover:bg-indigo-50 p-2 rounded transition" title="Rotate Counterclockwise" disabled>
                     <i class="fa-solid fa-rotate-left"></i>
                 </button>
@@ -101,5 +103,4 @@
 
     <script src="script.js"></script>
 </body>
-
 </html>
