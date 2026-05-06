@@ -1,566 +1,1357 @@
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+/* ═══════════════════════════════════════════════════════
+   PDF Organizer Enhanced — script.js v3
+   ═══════════════════════════════════════════════════════ */
 
-let rawPdfFiles = {}; 
-let lastSelectedNode = null; 
-let isConfirmingDelete = false; 
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-const elements = {
-    thumbnailsContainer: document.getElementById('thumbnails-container'),
-    pageBadge: document.getElementById('page-count-badge'),
-    emptyState: document.getElementById('empty-state'),
-    btnRotateLeft: document.getElementById('btn-rotate-left'),
-    btnRotateRight: document.getElementById('btn-rotate-right'),
-    btnDelete: document.getElementById('btn-delete'),
-    btnExport: document.getElementById('btn-export'),
-    btnExtract: document.getElementById('btn-extract'), // 🌟 เพิ่มปุ่ม Extract
-    mainContainer: document.getElementById('main-container'),
-    selectionBox: document.getElementById('selection-box'),
-    loadingOverlay: document.getElementById('loading-overlay'),
-    loadingText: document.getElementById('loading-text'),
-    loadingProgress: document.getElementById('loading-progress'),
-    zoomSlider: document.getElementById('zoom-slider'),
-    btnZoomOut: document.getElementById('btn-zoom-out'),
-    btnZoomIn: document.getElementById('btn-zoom-in'),
-    filenameInput: document.getElementById('filename-input')
-};
+/* ─── THEMES ─────────────────────────────────────────── */
+const THEMES = [
+    { id:'indigo', name:'Indigo', dark:false, p:'#6366f1', rgb:'99,102,241',  grad:'linear-gradient(135deg,#4f46e5,#3b82f6)', sh:'rgba(99,102,241,.30)',  b1:'rgba(219,234,254,.45)', b2:'rgba(199,210,254,.35)' },
+    { id:'ocean',  name:'Ocean',  dark:false, p:'#0ea5e9', rgb:'14,165,233',   grad:'linear-gradient(135deg,#0284c7,#06b6d4)', sh:'rgba(14,165,233,.30)',  b1:'rgba(186,230,253,.45)', b2:'rgba(165,243,252,.35)' },
+    { id:'forest', name:'Forest', dark:false, p:'#10b981', rgb:'16,185,129',   grad:'linear-gradient(135deg,#059669,#34d399)', sh:'rgba(16,185,129,.30)',  b1:'rgba(167,243,208,.45)', b2:'rgba(187,247,208,.35)' },
+    { id:'rose',   name:'Rose',   dark:false, p:'#f43f5e', rgb:'244,63,94',    grad:'linear-gradient(135deg,#e11d48,#fb7185)', sh:'rgba(244,63,94,.30)',   b1:'rgba(254,205,211,.45)', b2:'rgba(252,165,180,.35)' },
+    { id:'amber',  name:'Amber',  dark:false, p:'#f59e0b', rgb:'245,158,11',   grad:'linear-gradient(135deg,#d97706,#fbbf24)', sh:'rgba(245,158,11,.30)',  b1:'rgba(253,230,138,.45)', b2:'rgba(252,211,77,.35)'  },
+    { id:'dark',   name:'Dark 🌙', dark:true,  p:'#818cf8', rgb:'129,140,248',  grad:'linear-gradient(135deg,#6366f1,#818cf8)', sh:'rgba(129,140,248,.30)', b1:'rgba(99,102,241,.12)',  b2:'rgba(79,70,229,.08)'   },
+];
+let theme = THEMES[0];
 
-// 0. ระบบ Zoom
-const updateZoom = (size) => {
-    document.documentElement.style.setProperty('--thumb-width', `${size}px`);
-};
-
-if (elements.zoomSlider) {
-    elements.zoomSlider.addEventListener('input', (e) => updateZoom(parseInt(e.target.value)));
+function applyTheme(t) {
+    theme = t;
+    localStorage.setItem('pdforg_theme', t.id);
+    const s = document.documentElement.style;
+    s.setProperty('--p',       t.p);
+    s.setProperty('--p-rgb',   t.rgb);
+    s.setProperty('--p-light', `rgba(${t.rgb},.12)`);
+    s.setProperty('--p-grad',  t.grad);
+    s.setProperty('--p-shadow',t.sh);
+    document.documentElement.setAttribute('data-dark', t.dark ? 'true' : 'false');
+    g('blob-tl').style.background = t.b1;
+    g('blob-br').style.background = t.b2;
+    g('logo-badge').style.background = t.grad;
+    g('logo-badge').style.boxShadow = `0 6px 16px ${t.sh}`;
+    g('brand-sub').style.color = t.p;
+    g('page-count-badge').style.color = t.p;
+    g('loading-spinner').style.borderTopColor = t.p;
+    g('loading-bar').style.background = t.grad;
+    g('zoom-slider').style.accentColor = t.p;
+    refreshViewBtns();
+    refreshPvTabs();
+    document.querySelectorAll('.theme-option').forEach(b => {
+        const on = b.dataset.tid === t.id;
+        b.classList.toggle('active', on);
+        b.querySelector('.tc').style.display = on ? 'inline' : 'none';
+        b.querySelector('.tc').style.color = t.p;
+        b.querySelector('.tn').style.color = on ? t.p : '';
+        b.style.borderColor = on ? t.p : 'transparent';
+        b.style.background  = on ? `rgba(${t.rgb},.10)` : '';
+    });
+    if (viewMode === 'page') pvRender();
 }
-if (elements.btnZoomOut) {
-    elements.btnZoomOut.addEventListener('click', () => {
-        let newVal = Math.max(parseInt(elements.zoomSlider.min), parseInt(elements.zoomSlider.value) - 20);
-        elements.zoomSlider.value = newVal;
-        updateZoom(newVal);
+
+function buildThemePanel() {
+    const c = g('theme-options'); if (!c) return;
+    THEMES.forEach(t => {
+        const b = document.createElement('button');
+        b.className = 'theme-option'; b.dataset.tid = t.id;
+        b.innerHTML = `<div style="width:22px;height:22px;border-radius:6px;background:${t.grad};flex-shrink:0;box-shadow:0 2px 6px ${t.sh}"></div><div><div class="tn" style="font-size:12px;font-weight:700;color:var(--t1)">${t.name}</div></div><i class="fa-solid fa-check tc ml-auto" style="font-size:10px;display:none"></i>`;
+        b.onclick = () => { applyTheme(t); closeAllPanels(); };
+        c.appendChild(b);
     });
 }
-if (elements.btnZoomIn) {
-    elements.btnZoomIn.addEventListener('click', () => {
-        let newVal = Math.min(parseInt(elements.zoomSlider.max), parseInt(elements.zoomSlider.value) + 20);
-        elements.zoomSlider.value = newVal;
-        updateZoom(newVal);
-    });
+
+/* ─── STATE ──────────────────────────────────────────── */
+let rawPdfs    = {};        // fileId → ArrayBuffer
+let pvPdfDocs  = {};        // fileId → pdfjs doc
+let lastNode   = null;      // last clicked thumb
+let viewMode   = 'grid';
+let pvIdx      = 0;
+let pvZoom     = 100;
+let pvPages    = [];        // ordered .thumb-item nodes
+let pvMode     = 'single';  // 'single' | 'continuous'
+let pvTask     = null;      // current pdfjs render task
+let bookmarks  = new Set();
+let sbFilter   = 'all';     // 'all' | 'bookmarks'
+let srchQ      = '';
+let srchMatches = [];       // [{pi, count}]
+let sbVisible  = true;
+let ctxTarget  = null;      // right-clicked thumb
+let undoStack  = [];
+let redoStack  = [];
+let isConfirmingDelete = false;
+
+/* ─── UTILS ──────────────────────────────────────────── */
+const g  = id => document.getElementById(id);
+const qs = (sel, ctx) => (ctx||document).querySelector(sel);
+function tick() { return new Promise(r => setTimeout(r, 12)); }
+function closeAllPanels() {
+    g('theme-panel').style.display = 'none';
+    g('menu-panel').style.display  = 'none';
+    g('ctx-menu').style.display    = 'none';
+}
+function getFilename() {
+    let n = g('filename-input').value.trim() || 'My_Document';
+    return n.toLowerCase().endsWith('.pdf') ? n.slice(0,-4) : n;
+}
+function dlBlob(bytes, name) {
+    const url = URL.createObjectURL(new Blob([bytes],{type:'application/pdf'}));
+    Object.assign(document.createElement('a'),{href:url,download:name}).click();
+    URL.revokeObjectURL(url);
 }
 
-window.addEventListener('wheel', (e) => {
-    if (e.ctrlKey || e.metaKey) {
-        e.preventDefault(); 
-        let currentVal = parseInt(elements.zoomSlider.value);
-        let delta = e.deltaY < 0 ? 15 : -15; 
-        let newVal = Math.max(parseInt(elements.zoomSlider.min), Math.min(parseInt(elements.zoomSlider.max), currentVal + delta));
-        elements.zoomSlider.value = newVal;
-        updateZoom(newVal);
+/* toast */
+let _tt;
+function toast(msg, color) {
+    clearTimeout(_tt);
+    let el = g('_toast');
+    if (!el) {
+        el = document.createElement('div'); el.id = '_toast';
+        el.style.cssText='position:fixed;bottom:52px;left:50%;transform:translateX(-50%);color:white;padding:8px 18px;border-radius:999px;font-size:12px;font-weight:700;z-index:9999;white-space:nowrap;transition:opacity .3s;pointer-events:none';
+        document.body.appendChild(el);
     }
-}, { passive: false });
-
-// 1. Setup SortableJS
-new Sortable(elements.thumbnailsContainer, {
-    animation: 150,
-    ghostClass: 'sortable-ghost',
-    dragClass: 'sortable-drag',
-    filter: '.selection-box', 
-    onStart: function (evt) {
-        let item = evt.item;
-        
-        if (!item.classList.contains('thumbnail-active')) {
-            document.querySelectorAll('.thumbnail-active').forEach(el => el.classList.remove('thumbnail-active'));
-            item.classList.add('thumbnail-active');
-            lastSelectedNode = item;
-            updateToolStates();
-        }
-
-        const selected = document.querySelectorAll('.thumbnail-active');
-        
-        if (selected.length > 1) {
-            const badge = document.createElement('div');
-            badge.id = 'drag-badge';
-            badge.className = 'absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-rose-500 text-white text-sm font-bold px-4 py-2 flex items-center justify-center rounded-full z-50 shadow-xl border-2 border-white pointer-events-none whitespace-nowrap';
-            badge.innerHTML = `<i class="fa-solid fa-copy mr-2"></i> ${selected.length} Pages`;
-            item.appendChild(badge);
-
-            selected.forEach(el => {
-                if (el !== item) el.style.opacity = '0.3';
-            });
-        }
-    },
-    onEnd: function (evt) {
-        const badge = document.getElementById('drag-badge');
-        if (badge) badge.remove();
-
-        const selected = Array.from(document.querySelectorAll('.thumbnail-active'));
-        selected.forEach(el => el.style.opacity = '1'); 
-
-        if (selected.length > 1) {
-            selected.sort((a, b) => parseInt(a.dataset.pageIndex) - parseInt(b.dataset.pageIndex));
-            
-            let ref = evt.item.nextSibling;
-            while (ref && ref.classList.contains('thumbnail-active')) {
-                ref = ref.nextSibling;
-            }
-            
-            selected.forEach(el => {
-                elements.thumbnailsContainer.insertBefore(el, ref);
-            });
-        }
-        updatePageNumbers();
-    }
-});
-
-// 2. Lasso Selection
-let isSelecting = false;
-let startX = 0, startY = 0;
-let initialSelection = new Set();
-
-elements.thumbnailsContainer.addEventListener('mousedown', (e) => {
-    if (e.offsetX > elements.thumbnailsContainer.clientWidth) return; 
-
-    if (e.target === elements.thumbnailsContainer || e.target === elements.emptyState) {
-        isSelecting = true;
-        startX = e.clientX;
-        startY = e.clientY;
-        
-        elements.selectionBox.style.left = startX + 'px';
-        elements.selectionBox.style.top = startY + 'px';
-        elements.selectionBox.style.width = '0px';
-        elements.selectionBox.style.height = '0px';
-        elements.selectionBox.classList.remove('hidden');
-
-        if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
-            document.querySelectorAll('.thumb-item').forEach(el => {
-                el.classList.remove('thumbnail-active', 'sortable-selected');
-            });
-            initialSelection.clear();
-        } else {
-            initialSelection = new Set(Array.from(document.querySelectorAll('.thumbnail-active')));
-        }
-        updateToolStates();
-    }
-});
-
-window.addEventListener('mousemove', (e) => {
-    if (!isSelecting) return;
-
-    const currentX = e.clientX;
-    const currentY = e.clientY;
-    
-    const left = Math.min(startX, currentX);
-    const top = Math.min(startY, currentY);
-    const width = Math.abs(startX - currentX);
-    const height = Math.abs(startY - currentY);
-
-    elements.selectionBox.style.left = left + 'px';
-    elements.selectionBox.style.top = top + 'px';
-    elements.selectionBox.style.width = width + 'px';
-    elements.selectionBox.style.height = height + 'px';
-
-    const boxRect = elements.selectionBox.getBoundingClientRect();
-
-    document.querySelectorAll('.thumb-item').forEach(thumb => {
-        const thumbRect = thumb.getBoundingClientRect();
-        const isIntersecting = !(
-            boxRect.right < thumbRect.left || 
-            boxRect.left > thumbRect.right || 
-            boxRect.bottom < thumbRect.top || 
-            boxRect.top > thumbRect.bottom
-        );
-        
-        if (isIntersecting) {
-            thumb.classList.add('thumbnail-active', 'sortable-selected');
-            lastSelectedNode = thumb; 
-        } else {
-            if (initialSelection.has(thumb)) {
-                thumb.classList.add('thumbnail-active', 'sortable-selected');
-            } else {
-                thumb.classList.remove('thumbnail-active', 'sortable-selected');
-            }
-        }
-    });
-    updateToolStates();
-});
-
-window.addEventListener('mouseup', () => {
-    if (isSelecting) {
-        isSelecting = false;
-        elements.selectionBox.classList.add('hidden');
-    }
-});
-
-// 3. Grid Insert Marker
-const insertMarker = document.createElement('div');
-insertMarker.className = 'insert-marker hidden';
-let targetInsertNode = null; 
-
-elements.mainContainer.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    if (e.dataTransfer.types.includes('Files')) {
-        const thumbs = Array.from(elements.thumbnailsContainer.querySelectorAll('.thumb-item'));
-        if (thumbs.length === 0) return;
-
-        targetInsertNode = null; 
-        for (let i = 0; i < thumbs.length; i++) {
-            const rect = thumbs[i].getBoundingClientRect();
-            if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
-                if (e.clientX < rect.left + (rect.width / 2)) {
-                    targetInsertNode = thumbs[i];
-                    break;
-                }
-            } else if (e.clientY < rect.top) {
-                targetInsertNode = thumbs[i];
-                break;
-            }
-        }
-        elements.thumbnailsContainer.insertBefore(insertMarker, targetInsertNode);
-        insertMarker.classList.remove('hidden');
-    }
-});
-
-elements.mainContainer.addEventListener('dragleave', (e) => {
-    if (!elements.mainContainer.contains(e.relatedTarget)) {
-        insertMarker.classList.add('hidden');
-    }
-});
-
-elements.mainContainer.addEventListener('drop', (e) => {
-    e.preventDefault();
-    insertMarker.classList.add('hidden');
-    if (e.dataTransfer.types.includes('Files') && e.dataTransfer.files.length > 0) {
-        processFiles(e.dataTransfer.files, targetInsertNode);
-    }
-});
-
-document.getElementById('file-input').addEventListener('change', (e) => processFiles(e.target.files, null));
-
-// 4. File Processing with Loading UI
-async function processFiles(files, insertBeforeNode) {
-    if(elements.emptyState) elements.emptyState.style.display = 'none';
-    const newThumbnails = [];
-    let hasInvalidFiles = false; 
-
-    elements.loadingOverlay.classList.remove('hidden');
-    elements.loadingOverlay.classList.add('flex');
-
-    try {
-        for (let file of files) {
-            if (file.type !== 'application/pdf') {
-                hasInvalidFiles = true;
-                continue; 
-            }
-
-            elements.loadingText.innerText = `Reading file: ${file.name}...`;
-            elements.loadingProgress.style.width = '10%';
-            await new Promise(r => setTimeout(r, 10));
-
-            const arrayBuffer = await file.arrayBuffer();
-            const fileId = 'pdf_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
-            rawPdfFiles[fileId] = arrayBuffer; 
-            
-            elements.loadingText.innerText = `Parsing PDF structure...`;
-            elements.loadingProgress.style.width = '25%';
-            await new Promise(r => setTimeout(r, 10));
-
-            const pdf = await pdfjsLib.getDocument(new Uint8Array(arrayBuffer.slice(0))).promise;
-            const totalPages = pdf.numPages;
-
-            for (let i = 1; i <= totalPages; i++) {
-                elements.loadingText.innerText = `Extracting page ${i} of ${totalPages}...`;
-                const progressPercent = 25 + ((i / totalPages) * 75); 
-                elements.loadingProgress.style.width = `${progressPercent}%`;
-
-                await new Promise(r => setTimeout(r, 0));
-
-                const page = await pdf.getPage(i);
-                const thumbDiv = await createThumbnail(page, fileId, i);
-                newThumbnails.push(thumbDiv);
-            }
-        }
-
-        newThumbnails.forEach(t => {
-            elements.thumbnailsContainer.insertBefore(t, insertBeforeNode);
-        });
-        updatePageNumbers();
-
-        if (hasInvalidFiles) {
-            setTimeout(() => alert('Some files were skipped because they are not valid PDF documents.'), 500);
-        }
-
-    } catch (error) {
-        console.error("Error loading file:", error);
-        alert("There was an error processing the PDF.");
-    } finally {
-        elements.loadingOverlay.classList.remove('flex');
-        elements.loadingOverlay.classList.add('hidden');
-        elements.loadingProgress.style.width = '0%';
-        
-        if (document.querySelectorAll('.thumb-item').length === 0) {
-            if(elements.emptyState) elements.emptyState.style.display = 'flex';
-        }
-    }
+    const c = color || theme.p;
+    el.textContent = msg; el.style.background = c;
+    el.style.boxShadow = `0 5px 18px ${c}88`; el.style.opacity = '1';
+    _tt = setTimeout(() => el.style.opacity = '0', 2600);
 }
 
-async function createThumbnail(page, fileId, pageIndex) {
-    const container = document.createElement('div');
-    container.className = 'thumb-item relative cursor-pointer border-2 border-gray-200 bg-white rounded-md overflow-hidden';
-    
-    container.dataset.fileId = fileId;
-    container.dataset.originalPageIndex = pageIndex; 
-    container.dataset.pageIndex = pageIndex;
-    container.dataset.rotation = page.rotate || 0; 
+/* loading */
+function showLoading(v) {
+    g('loading-overlay').style.display = v ? 'flex' : 'none';
+    if (!v) { g('loading-bar').style.width='0'; }
+}
+function setLoading(txt, pct) {
+    g('loading-text').textContent = txt;
+    g('loading-bar').style.width  = pct + '%';
+}
 
-    const viewport = page.getViewport({ scale: 0.6, rotation: parseInt(container.dataset.rotation) });
-    const canvas = document.createElement('canvas');
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
-    
-    canvas.className = 'w-full h-auto pointer-events-none bg-white';
+/* ─── UNDO / REDO ────────────────────────────────────── */
+function snapshotState() {
+    const thumbs = document.querySelectorAll('.thumb-item');
+    return Array.from(thumbs).map(t => ({
+        fileId: t.dataset.fileId,
+        oi: t.dataset.originalPageIndex,
+        rot: t.dataset.rotation,
+        canvas: t.querySelector('canvas'),
+    }));
+}
+function pushUndo() {
+    undoStack.push(captureOrder());
+    redoStack = [];
+    updateUndoRedoBtns();
+}
+function captureOrder() {
+    return Array.from(document.querySelectorAll('.thumb-item')).map(t => ({
+        node: t, pi: parseInt(t.dataset.pageIndex), rot: parseInt(t.dataset.rotation||0)
+    }));
+}
+function updateUndoRedoBtns() {
+    g('btn-undo').disabled = undoStack.length === 0;
+    g('btn-redo').disabled = redoStack.length === 0;
+}
+function undo() {
+    if (!undoStack.length) return;
+    redoStack.push(captureOrder());
+    const prev = undoStack.pop();
+    restoreOrder(prev);
+    updateUndoRedoBtns();
+}
+function redo() {
+    if (!redoStack.length) return;
+    undoStack.push(captureOrder());
+    const next = redoStack.pop();
+    restoreOrder(next);
+    updateUndoRedoBtns();
+}
+function restoreOrder(snap) {
+    const tc = g('thumbnails-container');
+    snap.forEach(s => { s.node.dataset.rotation = s.rot; tc.appendChild(s.node); });
+    updatePageNumbers();
+    toast('Restored', '#64748b');
+}
 
-    await page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport }).promise;
+/* ─── INIT ───────────────────────────────────────────── */
+(function init() {
+    buildThemePanel();
+    const tid = localStorage.getItem('pdforg_theme');
+    applyTheme(THEMES.find(t=>t.id===tid)||THEMES[0]);
+    try { bookmarks = new Set(JSON.parse(localStorage.getItem('pdforg_bookmarks')||'[]')); } catch{}
 
-    const badge = document.createElement('div');
-    badge.className = 'page-number-badge absolute bottom-1.5 right-1.5 bg-gray-900/80 text-white text-[11px] px-2 py-0.5 rounded-sm font-medium z-10';
-    
-    container.appendChild(canvas);
-    container.appendChild(badge);
+    /* Header panel toggles */
+    g('btn-theme').onclick = e => { e.stopPropagation(); togglePanel('theme-panel'); };
+    g('btn-menu').onclick  = e => { e.stopPropagation(); togglePanel('menu-panel'); };
+    document.addEventListener('click', closeAllPanels);
 
-    container.onclick = (e) => {
-        if (e.shiftKey && lastSelectedNode) {
-            const allThumbs = Array.from(elements.thumbnailsContainer.querySelectorAll('.thumb-item'));
-            let startIdx = allThumbs.indexOf(lastSelectedNode);
-            let endIdx = allThumbs.indexOf(container);
-            
-            if(startIdx === -1) startIdx = endIdx;
+    /* Menu items */
+    g('menu-add-files').onclick = () => g('file-input').click();
+    g('menu-print').onclick     = doPrint;
+    g('menu-export').onclick    = doExport;
+    g('menu-extract-all').onclick = doExtractSelected;
+    g('file-input').addEventListener('change', e => processFiles(e.target.files, null));
+    g('btn-export').onclick     = doExport;
 
-            const minIdx = Math.min(startIdx, endIdx);
-            const maxIdx = Math.max(startIdx, endIdx);
+    /* View toggle */
+    g('btn-view-grid').onclick = () => setViewMode('grid');
+    g('btn-view-page').onclick = () => setViewMode('page');
 
-            if (!e.ctrlKey && !e.metaKey) {
-                allThumbs.forEach(el => el.classList.remove('thumbnail-active', 'sortable-selected'));
-            }
+    /* Grid toolbar */
+    g('btn-undo').onclick         = undo;
+    g('btn-redo').onclick         = redo;
+    g('btn-rotate-left').onclick  = () => actionOnSelected(t => gridRotate(t,-90));
+    g('btn-rotate-right').onclick = () => actionOnSelected(t => gridRotate(t, 90));
+    g('btn-delete').onclick       = doDelete;
+    g('btn-extract').onclick      = doExtractSelected;
 
-            for (let i = minIdx; i <= maxIdx; i++) {
-                allThumbs[i].classList.add('thumbnail-active', 'sortable-selected');
-            }
+    /* PV mode toggle */
+    g('pv-mode-single').onclick = () => setPvMode('single');
+    g('pv-mode-cont').onclick   = () => setPvMode('continuous');
+
+    /* PV nav */
+    g('pv-prev').onclick = () => pvNav(pvIdx-1);
+    g('pv-next').onclick = () => pvNav(pvIdx+1);
+
+    /* PV zoom */
+    g('pv-zoom-in').onclick  = () => { pvZoom = Math.min(250, pvZoom+15); updatePvZoom(); pvRender(); };
+    g('pv-zoom-out').onclick = () => { pvZoom = Math.max(30,  pvZoom-15); updatePvZoom(); pvRender(); };
+
+    /* PV zoom presets */
+    g('pv-zoom-fit').onclick  = () => { pvZoom = 100; updatePvZoom(); pvRender(); };
+    g('pv-zoom-full').onclick = () => {
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen().catch(() => {});
         } else {
-            if (!e.ctrlKey && !e.metaKey) {
-                document.querySelectorAll('.thumb-item').forEach(el => {
-                    if(el !== container) {
-                        el.classList.remove('thumbnail-active', 'sortable-selected');
-                    }
-                });
-            }
-            container.classList.toggle('thumbnail-active');
-            container.classList.toggle('sortable-selected'); 
+            document.exitFullscreen();
         }
-        
-        lastSelectedNode = container; 
-        updateToolStates();
+    };
+    document.addEventListener('fullscreenchange', () => {
+        const btn = g('pv-zoom-full');
+        if (!btn) return;
+        if (document.fullscreenElement) {
+            btn.innerHTML = '<i class="fa-solid fa-compress"></i>';
+            btn.title = 'Exit Fullscreen';
+        } else {
+            btn.innerHTML = '<i class="fa-solid fa-expand"></i>';
+            btn.title = 'Fullscreen';
+        }
+    });
+
+    /* Ctrl+scroll zoom in page view — handled by global capture listener above */
+    g('pv-canvas-area').addEventListener('wheel', e => {
+        if (e.ctrlKey || e.metaKey) return; // handled globally
+        if (pvMode === 'single') {
+            e.preventDefault();
+            if (e.deltaY >  50) pvNav(pvIdx+1);
+            if (e.deltaY < -50) pvNav(pvIdx-1);
+        }
+        // continuous: native scroll
+    }, { passive: false });
+
+    /* PV bookmark */
+    g('pv-bkm-toggle').onclick = toggleBkmCurrent;
+    g('pvr-bkm').onclick       = toggleBkmCurrent;
+    g('pvr-rot-l').onclick     = () => pvRotate(-90);
+    g('pvr-rot-r').onclick     = () => pvRotate( 90);
+    g('pvr-extract').onclick   = pvExtract;
+    g('pvr-print').onclick     = doPrint;
+    g('pvr-delete').onclick    = pvDelete;
+
+    /* PV sidebar tabs */
+    g('pv-tab-all').onclick = () => { sbFilter='all';       refreshPvTabs(); pvBuildSidebar(); };
+    g('pv-tab-bkm').onclick = () => { sbFilter='bookmarks'; refreshPvTabs(); pvBuildSidebar(); };
+
+    /* PV sidebar toggle */
+    g('pv-sidebar-toggle').onclick   = () => toggleSidebar(false);
+    g('pv-sidebar-collapsed').onclick = () => toggleSidebar(true);
+
+    /* PV search */
+    g('pv-search').addEventListener('input', e => { srchQ = e.target.value; pvSearch(); });
+    g('pv-search-jump').onclick = pvJumpMatch;
+
+    /* Keyboard */
+    window.addEventListener('keydown', e => {
+        if (e.target.tagName==='INPUT') return;
+        if (viewMode==='page') {
+            if (e.key==='ArrowRight'||e.key==='ArrowDown') pvNav(pvIdx+1);
+            if (e.key==='ArrowLeft' ||e.key==='ArrowUp')   pvNav(pvIdx-1);
+            if ((e.ctrlKey||e.metaKey)&&e.key==='f') { e.preventDefault(); g('pv-search').focus(); }
+        }
+        if (viewMode==='grid') {
+            if ((e.key==='Delete'||e.key==='Backspace') && !isConfirmingDelete)
+                if (document.querySelectorAll('.thumbnail-active').length) doDelete();
+            if ((e.ctrlKey||e.metaKey)&&e.key==='z') { e.preventDefault(); undo(); }
+            if ((e.ctrlKey||e.metaKey)&&(e.key==='y'||(e.shiftKey&&e.key==='z'))) { e.preventDefault(); redo(); }
+        }
+    });
+
+    /* Context menu — all actions use ctxGetTargets() for multi-select support */
+    g('ctx-bkm').onclick     = () => { if(ctxTarget) toggleBkmNode(ctxTarget); closeAllPanels(); };
+    g('ctx-extract').onclick = () => {
+        const targets = ctxGetTargets();
+        if (targets.length === 1) {
+            extractNode(targets[0]);
+        } else if (targets.length > 1) {
+            // Temporarily ensure selection matches targets then use doExtractSelected
+            document.querySelectorAll('.thumbnail-active').forEach(t => t.classList.remove('thumbnail-active'));
+            targets.forEach(t => t.classList.add('thumbnail-active'));
+            doExtractSelected();
+        }
+        closeAllPanels();
+    };
+    g('ctx-rot-l').onclick   = () => {
+        const targets = ctxGetTargets();
+        if (targets.length) { pushUndo(); targets.forEach(t => gridRotate(t, -90)); }
+        closeAllPanels();
+    };
+    g('ctx-rot-r').onclick   = () => {
+        const targets = ctxGetTargets();
+        if (targets.length) { pushUndo(); targets.forEach(t => gridRotate(t, 90)); }
+        closeAllPanels();
+    };
+    g('ctx-delete').onclick  = () => {
+        const targets = ctxGetTargets();
+        if (targets.length) {
+            pushUndo();
+            targets.forEach(t => { bookmarks.delete(parseInt(t.dataset.pageIndex)); t.remove(); });
+            saveBkm(); updatePageNumbers(); lastNode = null;
+            if (!g('thumbnails-container').querySelectorAll('.thumb-item').length && g('empty-state'))
+                g('empty-state').style.display = 'flex';
+        }
+        closeAllPanels();
     };
 
-    return container;
-}
-
-function updatePageNumbers() {
-    const thumbs = elements.thumbnailsContainer.querySelectorAll('.thumb-item');
-    let count = 0;
-    thumbs.forEach(thumb => {
-        count++;
-        thumb.dataset.pageIndex = count; 
-        thumb.querySelector('.page-number-badge').innerText = count;
+    /* Drop PDF onto PV sidebar */
+    const sidebar = g('pv-sidebar');
+    const dh = g('pv-drop-hint');
+    ['dragenter','dragover'].forEach(ev => sidebar.addEventListener(ev, e => {
+        if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); dh.classList.add('drag-over'); }
+    }));
+    ['dragleave','dragend'].forEach(ev => sidebar.addEventListener(ev, () => dh.classList.remove('drag-over')));
+    sidebar.addEventListener('drop', e => {
+        e.preventDefault(); dh.classList.remove('drag-over');
+        if (e.dataTransfer.files.length) processFiles(e.dataTransfer.files, null);
     });
-    elements.pageBadge.innerText = `${count} Pages`;
-    updateToolStates();
+
+    /* Drop PDF onto PV main canvas area */
+    const pvMain = g('pv-main');
+    pvMain.addEventListener('dragover', e => {
+        if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); pvMain.classList.add('pv-drop-hover'); }
+    });
+    pvMain.addEventListener('dragleave', e => { if (!pvMain.contains(e.relatedTarget)) pvMain.classList.remove('pv-drop-hover'); });
+    pvMain.addEventListener('drop', e => {
+        e.preventDefault(); pvMain.classList.remove('pv-drop-hover');
+        if (e.dataTransfer.types.includes('Files') && e.dataTransfer.files.length)
+            processFiles(e.dataTransfer.files, null);
+    });
+
+    /* PV sidebar insert-between-pages on file drag */
+    const pvThumbList = g('pv-thumb-list');
+    pvThumbList.addEventListener('dragover', e => {
+        if (!e.dataTransfer.types.includes('Files')) return;
+        e.preventDefault();
+        pvClearInsertLines();
+        const thumbs = [...pvThumbList.querySelectorAll('.pv-thumb')];
+        if (!thumbs.length) return;
+        let inserted = false;
+        for (let i = 0; i < thumbs.length; i++) {
+            const r = thumbs[i].getBoundingClientRect();
+            if (e.clientY < r.top + r.height / 2) {
+                const line = document.createElement('div');
+                line.className = 'pv-insert-line';
+                pvThumbList.insertBefore(line, thumbs[i]);
+                inserted = true; break;
+            }
+        }
+        if (!inserted) {
+            const line = document.createElement('div');
+            line.className = 'pv-insert-line';
+            pvThumbList.appendChild(line);
+        }
+    });
+    pvThumbList.addEventListener('dragleave', e => {
+        if (!pvThumbList.contains(e.relatedTarget)) pvClearInsertLines();
+    });
+    pvThumbList.addEventListener('drop', e => {
+        e.preventDefault(); e.stopPropagation(); pvClearInsertLines();
+        if (e.dataTransfer.types.includes('Files') && e.dataTransfer.files.length) {
+            // Find drop position in pvPages
+            const thumbs = [...pvThumbList.querySelectorAll('.pv-thumb')];
+            let dropIdx = pvPages.length;
+            for (let i = 0; i < thumbs.length; i++) {
+                const r = thumbs[i].getBoundingClientRect();
+                if (e.clientY < r.top + r.height / 2) { dropIdx = parseInt(thumbs[i].dataset.pvr); break; }
+            }
+            const insertBefore = pvPages[dropIdx] || null;
+            processFiles(e.dataTransfer.files, insertBefore);
+        }
+    });
+
+    /* Prevent pvMain from also firing when drop happened on thumb-list */
+    g('pv-main').addEventListener('drop', e => {
+        if (e.target.closest('#pv-thumb-list')) return;
+        e.preventDefault(); g('pv-main').classList.remove('pv-drop-hover');
+        if (e.dataTransfer.types.includes('Files') && e.dataTransfer.files.length)
+            processFiles(e.dataTransfer.files, null);
+    });
+
+    /* Grid drag-over / drop — shows dashed outline on container + insert marker at insertion point */
+    const mc = g('main-container');
+    mc.addEventListener('dragover', e => {
+        e.preventDefault();
+        if (!e.dataTransfer.types.includes('Files')) return;
+        mc.classList.add('file-drag-over'); // show dashed outline around grid
+        const thumbs = [...document.querySelectorAll('.thumb-item')];
+        targetInsert = null;
+        for (let t of thumbs) {
+            const r = t.getBoundingClientRect();
+            if (e.clientY>=r.top&&e.clientY<=r.bottom&&e.clientX<r.left+r.width/2){targetInsert=t;break;}
+            else if(e.clientY<r.top){targetInsert=t;break;}
+        }
+        g('thumbnails-container').insertBefore(insertMarker, targetInsert);
+        insertMarker.classList.remove('hidden-marker');
+    });
+    mc.addEventListener('dragleave', e => {
+        if(!mc.contains(e.relatedTarget)) {
+            insertMarker.classList.add('hidden-marker');
+            mc.classList.remove('file-drag-over'); // hide dashed outline
+        }
+    });
+    mc.addEventListener('drop', e => {
+        e.preventDefault();
+        insertMarker.classList.add('hidden-marker');
+        mc.classList.remove('file-drag-over'); // hide dashed outline
+        if (e.dataTransfer.types.includes('Files')&&e.dataTransfer.files.length)
+            processFiles(e.dataTransfer.files, targetInsert);
+    });
+
+    /* Grid zoom */
+    g('zoom-slider').addEventListener('input', e => updateGridZoom(parseInt(e.target.value)));
+    g('btn-zoom-out').onclick = () => { const v=Math.max(120,parseInt(g('zoom-slider').value)-20); g('zoom-slider').value=v; updateGridZoom(v); };
+    g('btn-zoom-in').onclick  = () => { const v=Math.min(300,parseInt(g('zoom-slider').value)+20); g('zoom-slider').value=v; updateGridZoom(v); };
+    window.addEventListener('wheel', e => {
+        if ((e.ctrlKey||e.metaKey) && viewMode==='grid') {
+            e.preventDefault();
+            let v = parseInt(g('zoom-slider').value) + (e.deltaY<0?15:-15);
+            v = Math.max(120,Math.min(300,v)); g('zoom-slider').value=v; updateGridZoom(v);
+        }
+    }, { passive:false });
+
+    document.body.classList.add('grid-view');
+    updateUndoRedoBtns();
+
+    /* Global ctrl+scroll for page-view zoom
+       - Single mode: immediate (pvRenderSeq cancels stale renders)
+       - Continuous mode: debounced (rebuilding all pages is expensive) */
+    g('app-body').addEventListener('wheel', e => {
+        if (viewMode !== 'page') return;
+        if (!e.ctrlKey && !e.metaKey) return;
+        e.preventDefault();
+        e.stopPropagation();
+        pvZoom = Math.max(30, Math.min(250, pvZoom + (e.deltaY < 0 ? 15 : -15)));
+        updatePvZoom();
+        pvRender();
+    }, { passive: false, capture: true });
+})();
+
+/* ─── PANELS ─────────────────────────────────────────── */
+function togglePanel(id) {
+    const el = g(id);
+    const vis = el.style.display === 'block';
+    closeAllPanels();
+    if (!vis) el.style.display = 'block';
 }
 
-function updateToolStates() {
-    const selected = document.querySelectorAll('.thumbnail-active');
-    const hasSelected = selected.length > 0;
-    
-    elements.btnRotateLeft.disabled = !hasSelected;
-    elements.btnRotateRight.disabled = !hasSelected;
-    elements.btnDelete.disabled = !hasSelected;
-    elements.btnExtract.disabled = !hasSelected; // 🌟 เปิด/ปิด ปุ่ม Extract
-}
-
-// 5. PDF Actions: Rotate, Delete, Export
-async function actionOnSelected(actionFunc) {
-    const selected = document.querySelectorAll('.thumbnail-active');
-    if (selected.length === 0) return;
-    
-    elements.btnRotateLeft.disabled = true;
-    elements.btnRotateRight.disabled = true;
-    elements.btnDelete.disabled = true;
-    elements.btnExtract.disabled = true;
-
-    for (let thumb of selected) {
-        await actionFunc(thumb);
+/* ─── VIEW MODE ──────────────────────────────────────── */
+function setViewMode(mode) {
+    viewMode = mode;
+    document.body.className = document.body.className.replace(/\b(grid|page)-view\b/g,'').trim();
+    document.body.classList.add(mode+'-view');
+    // Explicit display control to avoid CSS cascade issues
+    g('main-container').style.display       = mode==='grid' ? 'flex' : 'none';
+    g('page-view-container').style.display  = mode==='page' ? 'flex' : 'none';
+    g('zoom-bar').style.display             = mode==='grid' ? '' : 'none';
+    const gst = g('grid-sub-toolbar'); if(gst) gst.style.display = mode==='grid' ? 'flex' : 'none';
+    if (sbVisible) document.body.classList.remove('sb-collapsed');
+    else document.body.classList.add('sb-collapsed');
+    refreshViewBtns();
+    if (mode==='page') {
+        pvPages = [...document.querySelectorAll('.thumb-item')];
+        if (pvIdx>=pvPages.length) pvIdx=0;
+        pvUpdateEmptyState();
+        pvBuildSidebar();
+        pvNav(pvIdx);
     }
-    updateToolStates(); 
+}
+function refreshViewBtns() {
+    const bg = g('btn-view-grid'); if(bg) bg.classList.toggle('active-view', viewMode==='grid');
+    const bp = g('btn-view-page'); if(bp) bp.classList.toggle('active-view', viewMode==='page');
 }
 
-elements.btnRotateLeft.onclick = () => actionOnSelected(t => rotatePage(t, -90));
-elements.btnRotateRight.onclick = () => actionOnSelected(t => rotatePage(t, 90));
-
-async function rotatePage(thumb, degrees) {
-    let currentRotation = parseInt(thumb.dataset.rotation);
-    currentRotation = (currentRotation + degrees) % 360;
-    if (currentRotation < 0) currentRotation += 360;
-    thumb.dataset.rotation = currentRotation;
-
-    const fileId = thumb.dataset.fileId;
-    const originalPageIndex = parseInt(thumb.dataset.originalPageIndex);
-    
-    const pdf = await pdfjsLib.getDocument(new Uint8Array(rawPdfFiles[fileId].slice(0))).promise;
-    const page = await pdf.getPage(originalPageIndex);
-
-    const thumbCanvas = thumb.querySelector('canvas');
-    const thumbViewport = page.getViewport({ scale: 0.6, rotation: currentRotation });
-    thumbCanvas.width = thumbViewport.width;
-    thumbCanvas.height = thumbViewport.height;
-    await page.render({ canvasContext: thumbCanvas.getContext('2d'), viewport: thumbViewport }).promise;
+/* ─── SIDEBAR TOGGLE ─────────────────────────────────── */
+function toggleSidebar(show) {
+    sbVisible = show;
+    const sb = g('pv-sidebar');
+    // Clear any inline style.width set by the resizer so the CSS class can take effect
+    if (!show) sb.style.width = '';
+    sb.classList.toggle('collapsed', !show);
+    document.body.classList.toggle('sb-collapsed', !show);
+    g('page-view-container').classList.toggle('sb-collapsed', !show);
 }
 
-elements.btnDelete.onclick = () => {
-    const selected = document.querySelectorAll('.thumbnail-active');
-    if (selected.length === 0) return;
+/* ─── BOOKMARKS ──────────────────────────────────────── */
+function saveBkm() { localStorage.setItem('pdforg_bookmarks', JSON.stringify([...bookmarks])); }
+function toggleBkmCurrent() {
+    if (!pvPages[pvIdx]) return;
+    toggleBkmNode(pvPages[pvIdx]);
+    pvBuildSidebar();
+}
+function toggleBkmNode(thumb) {
+    const pi = parseInt(thumb.dataset.pageIndex);
+    if (bookmarks.has(pi)) { bookmarks.delete(pi); toast('Bookmark removed','#94a3b8'); }
+    else                   { bookmarks.add(pi);    toast(`Page ${pi} bookmarked`,'#f59e0b'); }
+    saveBkm();
+    thumb.classList.toggle('bookmarked', bookmarks.has(pi));
+    updateBkmUI();
+}
+function updateBkmUI() {
+    if (!pvPages[pvIdx]) return;
+    const bkm = bookmarks.has(parseInt(pvPages[pvIdx].dataset.pageIndex));
+    const btn = g('pv-bkm-toggle');
+    btn.classList.toggle('bookmarked', bkm);
+    btn.innerHTML = bkm ? '<i class="fa-solid fa-bookmark"></i> Saved' : '<i class="fa-regular fa-bookmark"></i> Bookmark';
+    const rbBtn = g('pvr-bkm');
+    rbBtn.classList.toggle('pvr-active', bkm);
+    rbBtn.querySelector('i').className = bkm ? 'fa-solid fa-bookmark' : 'fa-regular fa-bookmark';
+}
 
-    if (isConfirmingDelete) return; 
-    isConfirmingDelete = true;
+function pvClearInsertLines() {
+    g('pv-thumb-list').querySelectorAll('.pv-insert-line').forEach(l => l.remove());
+}
 
-    const confirmMessage = selected.length > 1 
-        ? `Are you sure you want to delete ${selected.length} pages?` 
-        : `Are you sure you want to delete this page?`;
+/* ─── PV SIDEBAR ─────────────────────────────────────── */
+function pvBuildSidebar() {
+    [...g('pv-thumb-list').children].forEach(c => { if(c.id!=='pv-empty-bkm') c.remove(); });
+    const list = sbFilter==='bookmarks'
+        ? pvPages.filter(p => bookmarks.has(parseInt(p.dataset.pageIndex)))
+        : pvPages;
 
-    if (!confirm(confirmMessage)) {
-        isConfirmingDelete = false; 
+    const noB = sbFilter==='bookmarks' && list.length===0;
+    g('pv-empty-bkm').style.display = noB ? 'flex' : 'none';
+    g('pv-page-count-label').textContent = sbFilter==='bookmarks'
+        ? `${bookmarks.size} saved` : `${pvPages.length} pages`;
+
+    list.forEach(thumb => {
+        const ri = pvPages.indexOf(thumb);
+        const isA = ri===pvIdx;
+        const pi  = parseInt(thumb.dataset.pageIndex);
+        const bkm = bookmarks.has(pi);
+        const match = srchMatches.some(m=>m.pi===ri);
+
+        const wrap = document.createElement('div');
+        wrap.className = `pv-thumb${isA?' pv-active':''}${match&&!isA?' pv-match':''}`;
+        wrap.dataset.pvr = String(ri);  // index into pvPages
+        wrap.draggable = true;
+        wrap.style.position = 'relative';
+
+        // mini canvas
+        const src = thumb.querySelector('canvas');
+        const mini = document.createElement('canvas');
+        const sc = 140/Math.max(src.width,1);
+        mini.width  = Math.round(src.width*sc);
+        mini.height = Math.round(src.height*sc);
+        mini.getContext('2d').drawImage(src,0,0,mini.width,mini.height);
+
+        if (bkm) {
+            const bi=document.createElement('div'); bi.className='pv-thumb-bkm';
+            bi.innerHTML='<i class="fa-solid fa-bookmark"></i>'; wrap.appendChild(bi);
+        }
+        if (match&&!isA) {
+            const mb=document.createElement('div'); mb.className='pv-thumb-match-badge';
+            mb.textContent='match'; wrap.appendChild(mb);
+        }
+        wrap.appendChild(mini);
+        const lbl=document.createElement('div'); lbl.className='pv-thumb-label'; lbl.textContent=`Page ${pi}`;
+        wrap.appendChild(lbl);
+
+        wrap.addEventListener('click', ()=> pvNav(ri));
+        g('pv-thumb-list').appendChild(wrap);
+    });
+
+    // scroll active thumb into view
+    requestAnimationFrame(()=>{
+        const a = g('pv-thumb-list').querySelector('.pv-active');
+        if(a){ const tl=g('pv-thumb-list'); tl.scrollTop=a.offsetTop-tl.clientHeight/2+a.clientHeight/2; }
+    });
+
+    // Sortable reorder (only in 'all' mode)
+    if (window._pvSortable) { try { window._pvSortable.destroy(); } catch{} }
+    if (sbFilter === 'all') {
+        window._pvSortable = new Sortable(g('pv-thumb-list'), {
+            animation: 150,
+            filter: '#pv-empty-bkm, .pv-insert-line',
+            ghostClass: 'sortable-ghost',
+            onEnd(evt) {
+                // Rebuild pvPages from new DOM order
+                const items = [...g('pv-thumb-list').querySelectorAll('.pv-thumb')];
+                const newPvPages = items.map(el => pvPages[parseInt(el.dataset.pvr)]);
+                pvPages = newPvPages;
+                // Sync thumbnails-container order
+                const tc = g('thumbnails-container');
+                pvPages.forEach(t => tc.appendChild(t));
+                updatePageNumbers();
+                pushUndo();
+                pvIdx = evt.newIndex;
+                pvNav(pvIdx);
+            }
+        });
+    }
+
+    // Scroll to current page in continuous mode after rebuild
+    requestAnimationFrame(() => {
+        const contEl = g('pv-cont-area');
+        const areaEl = g('pv-canvas-area');
+        if (!contEl || !areaEl) return;
+        const target = contEl.querySelector(`[data-cont-idx="${pvIdx}"]`);
+        if (target) areaEl.scrollTop = target.offsetTop - 20;
+    });
+}
+function refreshPvTabs() {
+    const ta = g('pv-tab-all'); if(ta) ta.classList.toggle('active-pv-tab', sbFilter==='all');
+    const tb = g('pv-tab-bkm'); if(tb) tb.classList.toggle('active-pv-tab', sbFilter==='bookmarks');
+}
+
+function pvUpdateEmptyState() {
+    const empty = g('pv-empty-canvas');
+    const wrapper = g('pv-page-wrapper');
+    const hasPages = pvPages.length > 0;
+    if (empty) { empty.classList.toggle('visible', !hasPages); }
+    if (wrapper) { wrapper.classList.toggle('visible', hasPages); }
+}
+
+/* ─── PV NAVIGATE ────────────────────────────────────── */
+function pvNav(idx) {
+    pvUpdateEmptyState();
+    if (!pvPages.length) return;
+    idx = Math.max(0,Math.min(pvPages.length-1,idx));
+    pvIdx = idx;
+    g('pv-page-cur').textContent = idx+1;
+    g('pv-page-tot').textContent = pvPages.length;
+    g('pv-prev').disabled = idx===0;
+    g('pv-next').disabled = idx===pvPages.length-1;
+    updateBkmUI();
+    pvBuildSidebar();
+    pvRender();
+    pvUpdateSearchBanner();
+}
+
+/* ─── PV RENDER (real PDF.js) ────────────────────────── */
+let pvRenderSeq = 0; // sequence counter to cancel stale renders
+async function pvRender() {
+    if (!pvPages.length) return;
+    if (pvMode === 'continuous') { await pvRenderContinuous(); return; }
+    const thumb   = pvPages[pvIdx]; if(!thumb) return;
+    const fileId  = thumb.dataset.fileId;
+    const origIdx = parseInt(thumb.dataset.originalPageIndex);
+    const rotation= parseInt(thumb.dataset.rotation)||0;
+    if (!rawPdfs[fileId]) return;
+
+    if (!pvPdfDocs[fileId]) {
+        try { pvPdfDocs[fileId] = await pdfjsLib.getDocument(new Uint8Array(rawPdfs[fileId].slice(0))).promise; }
+        catch(e) { console.error('PV doc:', e); return; }
+    }
+    let page;
+    try { page = await pvPdfDocs[fileId].getPage(origIdx); }
+    catch(e) { console.error('PV page:', e); return; }
+
+    if (pvTask) { try{pvTask.cancel();}catch{} pvTask=null; }
+
+    const seq = ++pvRenderSeq;
+    const area   = g('pv-canvas-area');
+    const availW = area.clientWidth  - 40;
+    const availH = area.clientHeight - 40;
+    const baseVP = page.getViewport({scale:1, rotation});
+    const fitS   = Math.min(availW/baseVP.width, availH/baseVP.height, 2.5);
+    const scale  = fitS * (pvZoom/100);
+    const vp     = page.getViewport({scale, rotation});
+
+    // Render to offscreen canvas first to avoid flicker
+    const offscreen = document.createElement('canvas');
+    offscreen.width  = Math.round(vp.width);
+    offscreen.height = Math.round(vp.height);
+    const offCtx = offscreen.getContext('2d');
+    pvTask = page.render({canvasContext: offCtx, viewport: vp});
+    try { await pvTask.promise; }
+    catch(e) { if(e.name!=='RenderingCancelledException') console.warn('PV render:',e); return; }
+    pvTask = null;
+    if (seq !== pvRenderSeq) return; // stale
+
+    // Swap to visible canvas
+    const canvas = g('pv-canvas');
+    canvas.width  = offscreen.width;
+    canvas.height = offscreen.height;
+    canvas.style.width  = canvas.width  + 'px';
+    canvas.style.height = canvas.height + 'px';
+    canvas.getContext('2d').drawImage(offscreen, 0, 0);
+
+    // Page size indicator
+    const w = Math.round(baseVP.width * 25.4 / 72);
+    const h = Math.round(baseVP.height * 25.4 / 72);
+    let sizeName = 'Custom';
+    if ((w===210&&h===297)||(w===297&&h===210)) sizeName='A4';
+    else if ((w===210&&h===148)||(w===148&&h===210)) sizeName='A5';
+    else if ((w===297&&h===420)||(w===420&&h===297)) sizeName='A3';
+    const sizeEl = g('pv-page-size-badge');
+    if(sizeEl) sizeEl.textContent = sizeName ? `${sizeName} ${w}×${h}mm` : `${w}×${h}mm`;
+
+    // Highlights
+    g('pv-text-layer').innerHTML='';
+    if (srchQ.trim()) await pvRenderHighlights(page, vp);
+}
+
+/* ─── PV MODE (single / continuous) ─────────────────── */
+function updatePvZoom() {
+    g('pv-zoom-label').textContent = pvZoom + '%';
+}
+function setPvMode(mode) {
+    pvMode = mode;
+    const area = g('pv-canvas-area');
+    const wrapper = g('pv-page-wrapper');
+    const cont = g('pv-cont-area');
+    if (mode === 'continuous') {
+        if (wrapper) wrapper.style.display = 'none';
+        area.style.alignItems = 'flex-start';
+        area.style.overflowY = 'auto';
+        area.style.cursor = 'default';
+        pvRenderContinuous();
+    } else {
+        if (wrapper) wrapper.style.display = 'inline-block';
+        if (cont) cont.remove();
+        area.style.alignItems = 'center';
+        area.style.overflowY = 'auto';
+        area.style.cursor = 'ns-resize';
+        pvRender();
+    }
+    // update toggle buttons
+    const bs = g('pv-mode-single'); const bc = g('pv-mode-cont');
+    if (bs) { bs.classList.toggle('pv-mode-active', mode==='single'); }
+    if (bc) { bc.classList.toggle('pv-mode-active', mode==='continuous'); }
+}
+async function pvRenderContinuous() {
+    const area = g('pv-canvas-area');
+    const availW = area.clientWidth - 40;
+    const availH = area.clientHeight - 40;
+
+    // ── Fingerprint: detect zoom-only vs page-list change ──
+    const fp = pvPages.map(t =>
+        `${t.dataset.fileId}:${t.dataset.originalPageIndex}:${t.dataset.rotation||0}:${t.dataset.pageIndex}`
+    ).join('|');
+
+    let cont = g('pv-cont-area');
+
+    // ── Zoom-only update: resize & re-render in place, no DOM rebuild ──
+    if (cont && cont.dataset.fp === fp) {
+        const areaRect = area.getBoundingClientRect();
+        for (let i = 0; i < pvPages.length; i++) {
+            const wrapper = cont.children[i]; if (!wrapper) continue;
+            // Disconnect stale render observer FIRST — prevents old vp from overwriting new canvas
+            if (wrapper._renderObs) { wrapper._renderObs.disconnect(); wrapper._renderObs = null; }
+
+            const thumb = pvPages[i];
+            const fid = thumb.dataset.fileId;
+            const oi  = parseInt(thumb.dataset.originalPageIndex);
+            const rot = parseInt(thumb.dataset.rotation) || 0;
+            if (!rawPdfs[fid] || !pvPdfDocs[fid]) continue;
+            try {
+                const page   = await pvPdfDocs[fid].getPage(oi);
+                const baseVP = page.getViewport({scale:1, rotation:rot});
+                const fitS   = Math.min(availW/baseVP.width, availH/baseVP.height, 2.5);
+                const scale  = fitS * (pvZoom/100);
+                const vp     = page.getViewport({scale, rotation:rot});
+                const canvas = wrapper.querySelector('canvas'); if (!canvas) continue;
+                canvas.width  = Math.round(vp.width);
+                canvas.height = Math.round(vp.height);
+
+                const wRect = wrapper.getBoundingClientRect();
+                const inView = wRect.top < areaRect.bottom + 200 && wRect.bottom > areaRect.top - 200;
+                if (inView) {
+                    // Render immediately for visible pages
+                    page.render({canvasContext: canvas.getContext('2d'), viewport: vp}).promise.catch(()=>{});
+                } else {
+                    // Lazy render with fresh observer using updated vp
+                    const obs = new IntersectionObserver(async entries => {
+                        if (!entries[0].isIntersecting) return;
+                        obs.disconnect(); wrapper._renderObs = null;
+                        const oc = document.createElement('canvas');
+                        oc.width = canvas.width; oc.height = canvas.height;
+                        await page.render({canvasContext: oc.getContext('2d'), viewport: vp}).promise;
+                        canvas.getContext('2d').drawImage(oc, 0, 0);
+                    }, {root: area, rootMargin: '200px'});
+                    obs.observe(wrapper);
+                    wrapper._renderObs = obs;
+                }
+            } catch {}
+        }
         return;
     }
 
-    selected.forEach(thumb => thumb.remove());
-    updatePageNumbers();
-    
-    lastSelectedNode = null; 
-    isConfirmingDelete = false;
-    
-    if (document.querySelectorAll('.thumb-item').length === 0) {
-        if(elements.emptyState) elements.emptyState.style.display = 'flex';
+    // ── Full rebuild (page list, order or rotation changed) ──
+    const restoreIdx = pvIdx;
+    if (!cont) {
+        cont = document.createElement('div');
+        cont.id = 'pv-cont-area';
+        cont.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:16px;padding:20px;width:100%;';
+        area.appendChild(cont);
     }
-};
+    // Disconnect all stale observers before clearing DOM
+    Array.from(cont.children).forEach(w => {
+        if (w._renderObs) { w._renderObs.disconnect(); }
+        if (w._idxObs)    { w._idxObs.disconnect(); }
+    });
+    cont.innerHTML = '';
+    cont.dataset.fp = fp;
 
-window.addEventListener('keydown', (e) => {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-
-    if (e.key === 'Delete' || e.key === 'Backspace') {
-        const selected = document.querySelectorAll('.thumbnail-active');
-        if (selected.length > 0 && !isConfirmingDelete) {
-            elements.btnDelete.click(); 
+    for (let i = 0; i < pvPages.length; i++) {
+        const thumb = pvPages[i];
+        const fid   = thumb.dataset.fileId;
+        const oi    = parseInt(thumb.dataset.originalPageIndex);
+        const rot   = parseInt(thumb.dataset.rotation) || 0;
+        if (!rawPdfs[fid]) continue;
+        if (!pvPdfDocs[fid]) {
+            try { pvPdfDocs[fid] = await pdfjsLib.getDocument(new Uint8Array(rawPdfs[fid].slice(0))).promise; } catch{continue;}
         }
+        const page   = await pvPdfDocs[fid].getPage(oi);
+        const baseVP = page.getViewport({scale:1, rotation:rot});
+        // Same fitS as single mode → no size jump when switching modes
+        const fitS   = Math.min(availW/baseVP.width, availH/baseVP.height, 2.5);
+        const scale  = fitS * (pvZoom/100);
+        const vp     = page.getViewport({scale, rotation:rot});
+
+        const wrapper = document.createElement('div');
+        wrapper.dataset.contIdx = i;
+        wrapper.style.cssText = 'position:relative;background:white;border-radius:4px;box-shadow:0 4px 20px rgba(0,0,0,.20);flex-shrink:0;line-height:0;';
+        const canvas = document.createElement('canvas');
+        canvas.width  = Math.round(vp.width);
+        canvas.height = Math.round(vp.height);
+        canvas.style.display = 'block';
+        wrapper.appendChild(canvas);
+        // page label
+        const lbl = document.createElement('div');
+        lbl.textContent = `Page ${thumb.dataset.pageIndex}`;
+        lbl.style.cssText = 'position:absolute;bottom:8px;right:10px;background:rgba(15,23,42,.75);color:white;font-size:10px;font-weight:800;padding:3px 8px;border-radius:6px;backdrop-filter:blur(4px);';
+        wrapper.appendChild(lbl);
+        cont.appendChild(wrapper);
+
+        // Lazy render — store ref so zoom update can disconnect it
+        const renderObs = new IntersectionObserver(async entries => {
+            if (!entries[0].isIntersecting) return;
+            renderObs.disconnect(); wrapper._renderObs = null;
+            const oc = document.createElement('canvas');
+            oc.width = canvas.width; oc.height = canvas.height;
+            await page.render({canvasContext: oc.getContext('2d'), viewport: vp}).promise;
+            canvas.getContext('2d').drawImage(oc, 0, 0);
+        }, {root: area, rootMargin: '200px'});
+        renderObs.observe(wrapper);
+        wrapper._renderObs = renderObs;
+
+        // Track which page is most visible for pvIdx sync
+        const idxObs = new IntersectionObserver(entries => {
+            if (entries[0].isIntersecting) { pvIdx = i; pvUpdatePageCounter(); pvUpdateSearchBanner(); }
+        }, {root: area, threshold: 0.5});
+        idxObs.observe(wrapper);
+        wrapper._idxObs = idxObs;
+    }
+
+    // Restore scroll position to the page that was visible before rebuild
+    requestAnimationFrame(() => {
+        const target = cont.querySelector(`[data-cont-idx="${restoreIdx}"]`);
+        if (target) area.scrollTop = target.offsetTop - 20;
+    });
+}
+
+function pvUpdatePageCounter() {
+    g('pv-page-cur').textContent = pvIdx + 1;
+    g('pv-page-tot').textContent = pvPages.length;
+    g('pv-prev').disabled = pvIdx === 0;
+    g('pv-next').disabled = pvIdx === pvPages.length - 1;
+}
+
+/* ─── SEARCH ─────────────────────────────────────────── */
+async function pvSearch() {
+    srchMatches = [];
+    const q = srchQ.trim().toLowerCase();
+    g('pv-search').classList.toggle('has-results', false);
+    g('pv-search-count').textContent = '';
+
+    if (!q) {
+        g('pv-search-banner').style.display='none';
+        g('pv-text-layer').innerHTML='';
+        pvBuildSidebar(); return;
+    }
+    for (let i=0; i<pvPages.length; i++) {
+        const t=pvPages[i], fid=t.dataset.fileId, oi=parseInt(t.dataset.originalPageIndex);
+        if (!rawPdfs[fid]) continue;
+        try {
+            if (!pvPdfDocs[fid]) pvPdfDocs[fid] = await pdfjsLib.getDocument(new Uint8Array(rawPdfs[fid].slice(0))).promise;
+            const pg = await pvPdfDocs[fid].getPage(oi);
+            const cnt = await pg.getTextContent();
+            let n=0; cnt.items.forEach(it=>{ if(it.str&&it.str.toLowerCase().includes(q)) n++; });
+            if(n) srchMatches.push({pi:i,count:n});
+        } catch{}
+    }
+    const tot=srchMatches.length;
+    g('pv-search').classList.toggle('has-results', tot>0);
+    g('pv-search-count').textContent = tot>0 ? `${tot}p` : '';
+    pvUpdateSearchBanner();
+    pvBuildSidebar();
+    pvRender();
+}
+
+async function pvRenderHighlights(page, vp) {
+    const q = srchQ.trim().toLowerCase(); if(!q) return;
+    const content = await page.getTextContent();
+    const canvas  = g('pv-canvas');
+    const tl      = g('pv-text-layer');
+    tl.style.width  = canvas.style.width;
+    tl.style.height = canvas.style.height;
+    const sx = canvas.clientWidth  / vp.width;
+    const sy = canvas.clientHeight / vp.height;
+    content.items.forEach(item=>{
+        if (!item.str||!item.str.toLowerCase().includes(q)) return;
+        const tx = pdfjsLib.Util.transform(vp.transform, item.transform);
+        const d=document.createElement('div'); d.className='search-highlight';
+        d.style.left   = (tx[4]*sx)+'px';
+        d.style.top    = ((vp.height-tx[5]-item.height)*sy)+'px';
+        d.style.width  = (item.width*vp.scale*sx)+'px';
+        d.style.height = (item.height*vp.scale*sy+2)+'px';
+        tl.appendChild(d);
+    });
+}
+
+function pvUpdateSearchBanner() {
+    if (!srchQ.trim()) { g('pv-search-banner').style.display='none'; return; }
+    const tot=srchMatches.length;
+    const cur=srchMatches.find(m=>m.pi===pvIdx);
+    const banner=g('pv-search-banner');
+    banner.style.display='flex';
+    banner.className = tot>0 ? 'has-results' : 'no-results';
+    g('pv-search-msg').textContent = tot===0
+        ? `No results for "${srchQ}"`
+        : cur ? `"${srchQ}" — ${cur.count} match(es) on this page (${tot} pages total)`
+              : `"${srchQ}" found in ${tot} page(s) — not on this page`;
+    g('pv-search-jump').style.display = (!cur&&tot>0)?'inline':'none';
+}
+function pvJumpMatch() {
+    const next=srchMatches.find(m=>m.pi>pvIdx)||srchMatches[0];
+    if(next) pvNav(next.pi);
+}
+
+/* ─── PV ACTIONS ─────────────────────────────────────── */
+async function pvRotate(deg) {
+    const t=pvPages[pvIdx]; if(!t) return;
+    const rot=(parseInt(t.dataset.rotation||0)+deg+360)%360;
+    t.dataset.rotation=rot;
+    if(pvPdfDocs[t.dataset.fileId]) {
+        const pg=await pvPdfDocs[t.dataset.fileId].getPage(parseInt(t.dataset.originalPageIndex));
+        // Use same scale as createThumb (.55) for consistent portrait/landscape sizing
+        const vp=pg.getViewport({scale:.55,rotation:rot});
+        const c=t.querySelector('canvas');
+        c.width=vp.width; c.height=vp.height;
+        c.style.width=''; c.style.height='';
+        await pg.render({canvasContext:c.getContext('2d'),viewport:vp}).promise;
+    }
+    pvRender();
+    toast(`Page ${t.dataset.pageIndex} rotated ${deg>0?'right':'left'}`);
+}
+
+async function pvExtract() {
+    const t=pvPages[pvIdx]; if(!t) return;
+    await extractNode(t);
+}
+
+async function extractNode(thumb) {
+    const fid=thumb.dataset.fileId, oi=parseInt(thumb.dataset.originalPageIndex)-1, rot=parseInt(thumb.dataset.rotation)||0;
+    try {
+        const {PDFDocument}=PDFLib;
+        const src=await PDFDocument.load(rawPdfs[fid].slice(0));
+        const dst=await PDFDocument.create();
+        const [cp]=await dst.copyPages(src,[oi]);
+        cp.setRotation(PDFLib.degrees(rot)); dst.addPage(cp);
+        dlBlob(await dst.save(),`${getFilename()}_Page${thumb.dataset.pageIndex}.pdf`);
+        toast(`Page ${thumb.dataset.pageIndex} extracted`,'#059669');
+    } catch(e) { alert('Extract error: '+e.message); }
+}
+
+function pvDelete() {
+    const t=pvPages[pvIdx]; if(!t) return;
+    const pi=parseInt(t.dataset.pageIndex);
+    if(!confirm(`Delete page ${pi}?`)) return;
+    pushUndo();
+    bookmarks.delete(pi); saveBkm();
+    t.remove(); updatePageNumbers();
+    pvPages=[...document.querySelectorAll('.thumb-item')];
+    if(!pvPages.length){setViewMode('grid');return;}
+    pvIdx=Math.max(0,pvIdx-1); pvNav(pvIdx);
+    toast(`Page ${pi} deleted`,'#f43f5e');
+}
+
+/* ─── PRINT ──────────────────────────────────────────── */
+async function doPrint() {
+    closeAllPanels();
+    if (viewMode === 'page') {
+        // Render ALL pages to iframe and print
+        showLoading(true); setLoading('Preparing print…', 10);
+        try {
+            const frame = g('print-frame');
+            frame.style.display = 'block';
+            const doc = frame.contentDocument || frame.contentWindow.document;
+            doc.open();
+            doc.write(`<!DOCTYPE html><html><head><style>
+                *{margin:0;padding:0;box-sizing:border-box}
+                body{background:white}
+                .print-page{display:flex;justify-content:center;align-items:flex-start;page-break-after:always;padding:0}
+                .print-page:last-child{page-break-after:avoid}
+                img{max-width:100%;height:auto;display:block}
+            </style></head><body id="pb"></body></html>`);
+            doc.close();
+            const pb = doc.getElementById('pb');
+            for (let i = 0; i < pvPages.length; i++) {
+                setLoading(`Rendering page ${i+1} of ${pvPages.length}…`, 10 + (i/pvPages.length)*85);
+                const thumb = pvPages[i];
+                const fid = thumb.dataset.fileId;
+                const oi = parseInt(thumb.dataset.originalPageIndex);
+                const rot = parseInt(thumb.dataset.rotation) || 0;
+                if (!pvPdfDocs[fid]) pvPdfDocs[fid] = await pdfjsLib.getDocument(new Uint8Array(rawPdfs[fid].slice(0))).promise;
+                const page = await pvPdfDocs[fid].getPage(oi);
+                const vp = page.getViewport({ scale: 2, rotation: rot });
+                const oc = document.createElement('canvas');
+                oc.width = vp.width; oc.height = vp.height;
+                await page.render({ canvasContext: oc.getContext('2d'), viewport: vp }).promise;
+                const div = doc.createElement('div'); div.className = 'print-page';
+                const img = doc.createElement('img'); img.src = oc.toDataURL('image/jpeg', 0.92);
+                div.appendChild(img); pb.appendChild(div);
+            }
+            setLoading('Opening print dialog…', 100);
+            setTimeout(() => {
+                frame.contentWindow.print();
+                frame.style.display = 'none';
+            }, 600);
+        } catch(e) { alert('Print error: ' + e.message); }
+        finally { showLoading(false); }
+    } else {
+        window.print();
+    }
+}
+
+/* ─── GRID ZOOM ──────────────────────────────────────── */
+function updateGridZoom(v) {
+    document.documentElement.style.setProperty('--thumb-w', v+'px');
+}
+
+/* ─── SORTABLE ───────────────────────────────────────── */
+new Sortable(g('thumbnails-container'),{
+    animation:150, ghostClass:'sortable-ghost', dragClass:'sortable-drag',
+    filter:'#selection-box',
+    onStart(e){
+        if(!e.item.classList.contains('thumbnail-active')){
+            document.querySelectorAll('.thumbnail-active').forEach(el=>el.classList.remove('thumbnail-active'));
+            e.item.classList.add('thumbnail-active'); lastNode=e.item; updateToolStates();
+        }
+        const sel=document.querySelectorAll('.thumbnail-active');
+        if(sel.length>1){
+            const b=document.createElement('div');
+            b.id='drag-badge';
+            b.style.cssText='position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:#f43f5e;color:white;font-size:12px;font-weight:800;padding:5px 12px;border-radius:999px;z-index:50;box-shadow:0 6px 16px rgba(244,63,94,.4);border:2px solid white;white-space:nowrap;pointer-events:none';
+            b.innerHTML=`<i class="fa-solid fa-copy" style="margin-right:5px"></i>${sel.length} Pages`;
+            e.item.appendChild(b);
+            sel.forEach(el=>{if(el!==e.item)el.style.opacity='.3';});
+        }
+    },
+    onEnd(e){
+        g('drag-badge')?.remove();
+        const sel=[...document.querySelectorAll('.thumbnail-active')];
+        sel.forEach(el=>el.style.opacity='1');
+        if(sel.length>1){
+            sel.sort((a,b)=>parseInt(a.dataset.pageIndex)-parseInt(b.dataset.pageIndex));
+            let ref=e.item.nextSibling;
+            while(ref&&ref.classList.contains('thumbnail-active'))ref=ref.nextSibling;
+            sel.forEach(el=>g('thumbnails-container').insertBefore(el,ref));
+        }
+        pushUndo(); updatePageNumbers();
     }
 });
 
-// 🌟 ฟังก์ชันแยกเฉพาะหน้าที่เลือก (Extract Selected) 🌟
-elements.btnExtract.onclick = async () => {
-    const selected = document.querySelectorAll('.thumbnail-active');
-    if (selected.length === 0) return;
+/* ─── LASSO ──────────────────────────────────────────── */
+let isLasso=false, lsX=0, lsY=0, lsInit=new Set();
+g('thumbnails-container').addEventListener('mousedown', e => {
+    if(e.target!==g('thumbnails-container')&&e.target!==g('empty-state'))return;
+    isLasso=true; lsX=e.clientX; lsY=e.clientY;
+    const sb=g('selection-box');
+    Object.assign(sb.style,{left:lsX+'px',top:lsY+'px',width:'0',height:'0',display:'block'});
+    if(!e.ctrlKey&&!e.metaKey&&!e.shiftKey){
+        document.querySelectorAll('.thumb-item').forEach(t=>t.classList.remove('thumbnail-active'));
+        lsInit.clear();
+    } else { lsInit=new Set(document.querySelectorAll('.thumbnail-active')); }
+    updateToolStates();
+});
+window.addEventListener('mousemove', e=>{
+    if(!isLasso)return;
+    const l=Math.min(lsX,e.clientX),t=Math.min(lsY,e.clientY),w=Math.abs(lsX-e.clientX),h=Math.abs(lsY-e.clientY);
+    const sb=g('selection-box');
+    Object.assign(sb.style,{left:l+'px',top:t+'px',width:w+'px',height:h+'px'});
+    const br=sb.getBoundingClientRect();
+    document.querySelectorAll('.thumb-item').forEach(thumb=>{
+        const r=thumb.getBoundingClientRect();
+        const hit=!(br.right<r.left||br.left>r.right||br.bottom<r.top||br.top>r.bottom);
+        if(hit){thumb.classList.add('thumbnail-active');lastNode=thumb;}
+        else if(lsInit.has(thumb))thumb.classList.add('thumbnail-active');
+        else thumb.classList.remove('thumbnail-active');
+    });
+    updateToolStates();
+});
+window.addEventListener('mouseup',()=>{
+    if(isLasso){isLasso=false;g('selection-box').style.display='none';}
+});
 
-    const originalIcon = elements.btnExtract.innerHTML;
-    elements.btnExtract.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
-    elements.btnExtract.disabled = true;
+/* ─── INSERT MARKER ──────────────────────────────────── */
+const insertMarker=document.createElement('div');
+insertMarker.className='insert-marker hidden-marker';
+insertMarker.style.cssText='width:5px;height:200px;background:var(--p);border-radius:8px;margin:0 -12px;box-shadow:0 0 18px var(--p)';
+g('thumbnails-container').appendChild(insertMarker);
+let targetInsert=null;
 
+/* ─── SIDEBAR RESIZE ─────────────────────────────────── */
+(function(){
+    const resizer = g('pv-sidebar-resizer');
+    const sidebar = g('pv-sidebar');
+    if (!resizer || !sidebar) return;
+    let startX, startW;
+    resizer.addEventListener('mousedown', e => {
+        startX = e.clientX; startW = sidebar.offsetWidth;
+        resizer.classList.add('dragging');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        const onMove = e => {
+            const w = Math.max(100, Math.min(320, startW + e.clientX - startX));
+            sidebar.style.width = w + 'px';
+        };
+        const onUp = () => {
+            resizer.classList.remove('dragging');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    });
+})();
+
+/* ─── CONTEXT MENU ───────────────────────────────────── */
+
+/* Returns the set of thumb-items that a context-menu action should affect:
+   - If ctxTarget is inside the current selection → all selected items
+   - Otherwise → just ctxTarget alone */
+function ctxGetTargets() {
+    const sel = [...document.querySelectorAll('.thumbnail-active')];
+    return (sel.length > 0 && ctxTarget && sel.includes(ctxTarget)) ? sel : (ctxTarget ? [ctxTarget] : []);
+}
+
+g('thumbnails-container').addEventListener('contextmenu', e=>{
+    const t=e.target.closest('.thumb-item');
+    if(!t){closeAllPanels();return;}
+    e.preventDefault();
+    ctxTarget=t;
+    const sel = [...document.querySelectorAll('.thumbnail-active')];
+    const affectedCount = (sel.length > 0 && sel.includes(t)) ? sel.length : 1;
+    const suffix = affectedCount > 1 ? ` (${affectedCount})` : '';
+    // Update labels
+    const bkm=bookmarks.has(parseInt(t.dataset.pageIndex));
+    g('ctx-bkm').innerHTML     = `<i class="fa-${bkm?'solid':'regular'} fa-bookmark"></i> ${bkm?'Remove Bookmark':'Bookmark'}`;
+    g('ctx-extract').innerHTML = `<i class="fa-solid fa-file-export"></i> Extract${suffix}`;
+    g('ctx-rot-l').innerHTML   = `<i class="fa-solid fa-rotate-left"></i> Rotate Left${suffix}`;
+    g('ctx-rot-r').innerHTML   = `<i class="fa-solid fa-rotate-right"></i> Rotate Right${suffix}`;
+    g('ctx-delete').innerHTML  = `<i class="fa-solid fa-trash-can"></i> Delete${suffix}`;
+    const m=g('ctx-menu');
+    m.style.display='block';
+    const mx=Math.min(e.clientX,window.innerWidth-170);
+    const my=Math.min(e.clientY,window.innerHeight-180);
+    m.style.left=mx+'px'; m.style.top=my+'px';
+});
+document.addEventListener('contextmenu', e=>{
+    if(!e.target.closest('#thumbnails-container')) closeAllPanels();
+});
+
+/* ─── FILE PROCESSING ────────────────────────────────── */
+async function processFiles(files, insertBefore) {
+    if(g('empty-state'))g('empty-state').style.display='none';
+    showLoading(true); let hasInvalid=false; const newThumbs=[];
     try {
-        const { PDFDocument } = PDFLib;
-        const newPdf = await PDFDocument.create();
-        const cachedPdfLibDocs = {}; 
-
-        for (let thumb of selected) {
-            const fileId = thumb.dataset.fileId;
-            const originalPageIndex = parseInt(thumb.dataset.originalPageIndex);
-            const pageIndex = originalPageIndex - 1; 
-            const rotation = parseInt(thumb.dataset.rotation);
-
-            if (!cachedPdfLibDocs[fileId]) {
-                cachedPdfLibDocs[fileId] = await PDFDocument.load(rawPdfFiles[fileId].slice(0));
+        for(let file of files){
+            if(file.type!=='application/pdf'){hasInvalid=true;continue;}
+            setLoading(`Reading: ${file.name}…`,10); await tick();
+            const ab=await file.arrayBuffer();
+            const fid='pdf_'+Date.now()+'_'+Math.floor(Math.random()*9999);
+            rawPdfs[fid]=ab;
+            setLoading('Parsing PDF…',25); await tick();
+            const pdf=await pdfjsLib.getDocument(new Uint8Array(ab.slice(0))).promise;
+            pvPdfDocs[fid]=pdf;
+            const tot=pdf.numPages;
+            for(let i=1;i<=tot;i++){
+                setLoading(`Extracting page ${i} of ${tot}…`,25+(i/tot)*73); await tick();
+                const pg=await pdf.getPage(i);
+                newThumbs.push(await createThumb(pg,fid,i));
             }
-
-            const [copiedPage] = await newPdf.copyPages(cachedPdfLibDocs[fileId], [pageIndex]);
-            copiedPage.setRotation(PDFLib.degrees(rotation));
-            newPdf.addPage(copiedPage);
         }
-
-        const pdfBytes = await newPdf.save();
-        const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        
-        // เติมคำว่า _Extracted ต่อท้ายชื่อไฟล์เดิม เพื่อให้รู้ว่าเป็นไฟล์ที่แยกออกมา
-        let baseName = elements.filenameInput.value.trim() || 'My_Organized_Document';
-        if (baseName.toLowerCase().endsWith('.pdf')) {
-            baseName = baseName.slice(0, -4); 
+        newThumbs.forEach(t=>g('thumbnails-container').insertBefore(t,insertBefore));
+        pushUndo(); updatePageNumbers();
+        if(hasInvalid) setTimeout(()=>alert('Some files skipped (not valid PDFs).'),400);
+        if(viewMode==='page'){
+            pvPages=[...document.querySelectorAll('.thumb-item')];
+            pvBuildSidebar(); pvNav(pvIdx);
         }
-        
-        a.href = url;
-        a.download = `${baseName}_Extracted.pdf`;
-        a.click();
-        URL.revokeObjectURL(url);
-    } catch (error) {
-        console.error("Extract Error:", error);
-        alert('Error extracting pages: ' + error.message);
-    } finally {
-        elements.btnExtract.innerHTML = originalIcon;
-        elements.btnExtract.disabled = false;
+    } catch(e){console.error(e);alert('Error: '+e.message);}
+    finally{
+        showLoading(false);
+        const tc=g('thumbnails-container');
+        if(!tc.querySelectorAll('.thumb-item').length&&g('empty-state'))
+            g('empty-state').style.display='flex';
     }
-};
+}
 
-// Export PDF (โหมดปกติ โหลดทุกหน้าบนจอ)
-elements.btnExport.onclick = async () => {
-    const thumbs = elements.thumbnailsContainer.querySelectorAll('.thumb-item');
-    if (thumbs.length === 0) return alert('No pages to export.');
+async function createThumb(page,fileId,pageIndex){
+    const rotation=page.rotate||0;
+    const el=document.createElement('div');
+    el.className='thumb-item';
+    el.dataset.fileId=fileId;
+    el.dataset.originalPageIndex=pageIndex;
+    el.dataset.pageIndex=pageIndex;
+    el.dataset.rotation=rotation;
 
-    elements.btnExport.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Generating PDF...';
-    elements.btnExport.disabled = true;
+    const vp=page.getViewport({scale:.55,rotation});
+    const canvas=document.createElement('canvas');
+    canvas.width=vp.width; canvas.height=vp.height;
+    await page.render({canvasContext:canvas.getContext('2d'),viewport:vp}).promise;
 
+    const badge=document.createElement('div');
+    badge.className='page-badge'; badge.textContent=pageIndex;
+    el.appendChild(canvas); el.appendChild(badge);
+
+    el.addEventListener('click', e=>{
+        if(e.shiftKey&&lastNode){
+            const all=[...document.querySelectorAll('.thumb-item')];
+            let s=all.indexOf(lastNode),en=all.indexOf(el);
+            if(s===-1)s=en;
+            const mn=Math.min(s,en),mx=Math.max(s,en);
+            if(!e.ctrlKey&&!e.metaKey) all.forEach(t=>t.classList.remove('thumbnail-active'));
+            for(let i=mn;i<=mx;i++) all[i].classList.add('thumbnail-active');
+        } else {
+            if(!e.ctrlKey&&!e.metaKey)
+                document.querySelectorAll('.thumb-item').forEach(t=>{if(t!==el)t.classList.remove('thumbnail-active');});
+            el.classList.toggle('thumbnail-active');
+        }
+        lastNode=el; updateToolStates();
+    });
+
+    el.addEventListener('dblclick', ()=>{
+        pvIdx=[...document.querySelectorAll('.thumb-item')].indexOf(el);
+        setViewMode('page');
+    });
+
+    return el;
+}
+
+/* ─── PAGE NUMBERS / TOOL STATES ─────────────────────── */
+function updatePageNumbers(){
+    let n=0;
+    document.querySelectorAll('.thumb-item').forEach(t=>{
+        n++; t.dataset.pageIndex=n;
+        t.querySelector('.page-badge').textContent=n;
+    });
+    g('page-count-badge').textContent=`${n} Pages`;
+    updateToolStates();
+}
+function updateToolStates(){
+    const has=document.querySelectorAll('.thumbnail-active').length>0;
+    ['btn-extract','btn-rotate-left','btn-rotate-right','btn-delete'].forEach(id=>{
+        const b=g(id); if(b) b.disabled=!has;
+    });
+}
+
+/* ─── GRID ACTIONS ───────────────────────────────────── */
+async function actionOnSelected(fn){
+    const sel=document.querySelectorAll('.thumbnail-active');
+    if(!sel.length)return;
+    pushUndo();
+    ['btn-extract','btn-rotate-left','btn-rotate-right','btn-delete'].forEach(id=>{const b=g(id);if(b)b.disabled=true;});
+    for(let t of sel) await fn(t);
+    updateToolStates();
+}
+
+async function gridRotate(thumb,deg){
+    const rot=(parseInt(thumb.dataset.rotation||0)+deg+360)%360;
+    thumb.dataset.rotation=rot;
+    const c=thumb.querySelector('canvas');
+    c.style.opacity='.4';
     try {
-        const { PDFDocument } = PDFLib;
-        const newPdf = await PDFDocument.create();
-        const cachedPdfLibDocs = {}; 
+        // Use same scale as createThumb (.55) so portrait/landscape dimensions are consistent
+        const pdf=await pdfjsLib.getDocument(new Uint8Array(rawPdfs[thumb.dataset.fileId].slice(0))).promise;
+        const pg=await pdf.getPage(parseInt(thumb.dataset.originalPageIndex));
+        const vp=pg.getViewport({scale:.55, rotation:rot});
+        c.width=vp.width; c.height=vp.height;
+        // Reset inline styles so CSS (width:100%; height:auto) controls display
+        c.style.width=''; c.style.height='';
+        await pg.render({canvasContext:c.getContext('2d'),viewport:vp}).promise;
+    } finally {c.style.opacity='1';}
+}
 
-        for (let thumb of thumbs) {
-            const fileId = thumb.dataset.fileId;
-            const originalPageIndex = parseInt(thumb.dataset.originalPageIndex);
-            const pageIndex = originalPageIndex - 1; 
-            const rotation = parseInt(thumb.dataset.rotation);
+function doDelete(){
+    const sel=document.querySelectorAll('.thumbnail-active');
+    if(!sel.length||isConfirmingDelete)return;
+    isConfirmingDelete=true;
+    if(!confirm(sel.length>1?`Delete ${sel.length} pages?`:'Delete this page?')){isConfirmingDelete=false;return;}
+    pushUndo();
+    sel.forEach(t=>{bookmarks.delete(parseInt(t.dataset.pageIndex));t.remove();});
+    saveBkm(); updatePageNumbers(); lastNode=null; isConfirmingDelete=false;
+    if(!g('thumbnails-container').querySelectorAll('.thumb-item').length&&g('empty-state'))
+        g('empty-state').style.display='flex';
+}
 
-            if (!cachedPdfLibDocs[fileId]) {
-                cachedPdfLibDocs[fileId] = await PDFDocument.load(rawPdfFiles[fileId].slice(0));
-            }
-
-            const [copiedPage] = await newPdf.copyPages(cachedPdfLibDocs[fileId], [pageIndex]);
-            copiedPage.setRotation(PDFLib.degrees(rotation));
-            newPdf.addPage(copiedPage);
+async function doExtractSelected(){
+    const sel=document.querySelectorAll('.thumbnail-active');
+    if(!sel.length)return;
+    const orig=g('btn-extract').innerHTML;
+    g('btn-extract').innerHTML='<i class="fa-solid fa-spinner fa-spin"></i>'; g('btn-extract').disabled=true;
+    try {
+        const {PDFDocument}=PDFLib;
+        const dst=await PDFDocument.create(); const cache={};
+        for(let t of sel){
+            const fid=t.dataset.fileId,oi=parseInt(t.dataset.originalPageIndex)-1,rot=parseInt(t.dataset.rotation)||0;
+            if(!cache[fid])cache[fid]=await PDFDocument.load(rawPdfs[fid].slice(0));
+            const[cp]=await dst.copyPages(cache[fid],[oi]);
+            cp.setRotation(PDFLib.degrees(rot)); dst.addPage(cp);
         }
+        dlBlob(await dst.save(),getFilename()+'_Extracted.pdf');
+        toast(`Extracted ${sel.length} page(s)`,'#059669');
+    } catch(e){alert('Extract error: '+e.message);}
+    finally{g('btn-extract').innerHTML=orig; g('btn-extract').disabled=false;}
+}
 
-        const pdfBytes = await newPdf.save();
-        const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        
-        let fileName = elements.filenameInput.value.trim() || 'My_Organized_Document';
-        if (!fileName.toLowerCase().endsWith('.pdf')) {
-            fileName += '.pdf';
+async function doExport(){
+    const thumbs=document.querySelectorAll('.thumb-item');
+    if(!thumbs.length)return alert('No pages to export.');
+    const orig=g('btn-export').innerHTML;
+    g('btn-export').innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Exporting…'; g('btn-export').disabled=true;
+    try {
+        const {PDFDocument}=PDFLib;
+        const dst=await PDFDocument.create(); const cache={};
+        for(let t of thumbs){
+            const fid=t.dataset.fileId,oi=parseInt(t.dataset.originalPageIndex)-1,rot=parseInt(t.dataset.rotation)||0;
+            if(!cache[fid])cache[fid]=await PDFDocument.load(rawPdfs[fid].slice(0));
+            const[cp]=await dst.copyPages(cache[fid],[oi]);
+            cp.setRotation(PDFLib.degrees(rot)); dst.addPage(cp);
         }
-        
-        a.href = url;
-        a.download = fileName;
-        a.click();
-        URL.revokeObjectURL(url);
-    } catch (error) {
-        console.error("Export Error:", error);
-        alert('Error: ' + error.message);
-    } finally {
-        elements.btnExport.innerHTML = '<i class="fa-solid fa-download mr-2"></i> Export PDF';
-        elements.btnExport.disabled = false;
-    }
-};
+        dlBlob(await dst.save(),getFilename()+'.pdf');
+        toast('Exported successfully ✓');
+    } catch(e){alert('Export error: '+e.message);}
+    finally{g('btn-export').innerHTML=orig; g('btn-export').disabled=false;}
+    closeAllPanels();
+}
