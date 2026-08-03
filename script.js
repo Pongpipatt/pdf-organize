@@ -2,17 +2,23 @@
    PDF Organizer Enhanced — script.js v3
    ═══════════════════════════════════════════════════════ */
 
-pdfjsLib.GlobalWorkerOptions.workerSrc =
-    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+if (typeof pdfjsLib !== 'undefined') {
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+} else {
+    console.error('pdf.js (pdfjsLib) failed to load — check your internet connection / CDN access.');
+    alert('Could not load PDF engine (pdf.js) from the CDN.\nPlease check your internet connection, then reload the page.');
+}
 
 /* ─── THEMES ─────────────────────────────────────────── */
 const THEMES = [
-    { id:'indigo', name:'Indigo', dark:false, p:'#6366f1', rgb:'99,102,241',  grad:'linear-gradient(135deg,#4f46e5,#3b82f6)', sh:'rgba(99,102,241,.30)',  b1:'rgba(219,234,254,.45)', b2:'rgba(199,210,254,.35)' },
-    { id:'ocean',  name:'Ocean',  dark:false, p:'#0ea5e9', rgb:'14,165,233',   grad:'linear-gradient(135deg,#0284c7,#06b6d4)', sh:'rgba(14,165,233,.30)',  b1:'rgba(186,230,253,.45)', b2:'rgba(165,243,252,.35)' },
-    { id:'forest', name:'Forest', dark:false, p:'#10b981', rgb:'16,185,129',   grad:'linear-gradient(135deg,#059669,#34d399)', sh:'rgba(16,185,129,.30)',  b1:'rgba(167,243,208,.45)', b2:'rgba(187,247,208,.35)' },
-    { id:'rose',   name:'Rose',   dark:false, p:'#f43f5e', rgb:'244,63,94',    grad:'linear-gradient(135deg,#e11d48,#fb7185)', sh:'rgba(244,63,94,.30)',   b1:'rgba(254,205,211,.45)', b2:'rgba(252,165,180,.35)' },
-    { id:'amber',  name:'Amber',  dark:false, p:'#f59e0b', rgb:'245,158,11',   grad:'linear-gradient(135deg,#d97706,#fbbf24)', sh:'rgba(245,158,11,.30)',  b1:'rgba(253,230,138,.45)', b2:'rgba(252,211,77,.35)'  },
-    { id:'dark',   name:'Dark 🌙', dark:true,  p:'#818cf8', rgb:'129,140,248',  grad:'linear-gradient(135deg,#6366f1,#818cf8)', sh:'rgba(129,140,248,.30)', b1:'rgba(99,102,241,.12)',  b2:'rgba(79,70,229,.08)'   },
+    { id:'navy',    name:'Navy',      dark:false, p:'#1d4ed8', rgb:'29,78,216',   grad:'linear-gradient(135deg,#1e3a8a,#2563eb)', sh:'rgba(29,78,216,.28)',  b1:'rgba(219,234,254,.45)', b2:'rgba(191,219,254,.35)' },
+    { id:'steel',   name:'Steel',     dark:false, p:'#0e7490', rgb:'14,116,144',  grad:'linear-gradient(135deg,#155e75,#0891b2)', sh:'rgba(14,116,144,.28)', b1:'rgba(207,250,254,.45)', b2:'rgba(165,243,252,.35)' },
+    { id:'cobalt',  name:'Cobalt',    dark:false, p:'#2563eb', rgb:'37,99,235',   grad:'linear-gradient(135deg,#1d4ed8,#3b82f6)', sh:'rgba(37,99,235,.28)',  b1:'rgba(219,234,254,.45)', b2:'rgba(199,210,254,.35)' },
+    { id:'graphite',name:'Graphite',  dark:false, p:'#334155', rgb:'51,65,85',    grad:'linear-gradient(135deg,#1e293b,#475569)', sh:'rgba(51,65,85,.26)',   b1:'rgba(226,232,240,.55)', b2:'rgba(203,213,225,.40)' },
+    { id:'teal',    name:'Teal',      dark:false, p:'#0d9488', rgb:'13,148,136',  grad:'linear-gradient(135deg,#0f766e,#14b8a6)', sh:'rgba(13,148,136,.28)', b1:'rgba(204,251,241,.45)', b2:'rgba(153,246,228,.35)' },
+    { id:'indigo',  name:'Indigo',    dark:false, p:'#4f46e5', rgb:'79,70,229',   grad:'linear-gradient(135deg,#4338ca,#6366f1)', sh:'rgba(79,70,229,.28)',  b1:'rgba(224,231,255,.45)', b2:'rgba(199,210,254,.35)' },
+    { id:'dark',    name:'Night 🌙',  dark:true,  p:'#60a5fa', rgb:'96,165,250',  grad:'linear-gradient(135deg,#2563eb,#60a5fa)', sh:'rgba(96,165,250,.30)', b1:'rgba(37,99,235,.12)',   b2:'rgba(29,78,216,.08)'   },
 ];
 let theme = THEMES[0];
 
@@ -65,6 +71,7 @@ let rawPdfs    = {};        // fileId → ArrayBuffer
 let pvPdfDocs  = {};        // fileId → pdfjs doc
 let lastNode   = null;      // last clicked thumb
 let viewMode   = 'grid';
+let navDest    = 'organize'; // active nav-rail destination
 let pvIdx      = 0;
 let pvZoom     = 100;
 let pvPages    = [];        // ordered .thumb-item nodes
@@ -163,15 +170,25 @@ function redo() {
     restoreOrder(next);
     updateUndoRedoBtns();
 }
-function restoreOrder(snap) {
+async function restoreOrder(snap) {
     const tc = g('thumbnails-container');
-    snap.forEach(s => { s.node.dataset.rotation = s.rot; tc.appendChild(s.node); });
+    // Reorder + fix rotation dataset synchronously so the layout snaps back instantly
+    const needsRerender = [];
+    snap.forEach(s => {
+        const prevRot = parseInt(s.node.dataset.rotation || 0);
+        const newRot  = parseInt(s.rot);
+        s.node.dataset.rotation = newRot;
+        tc.appendChild(s.node);
+        if (newRot !== prevRot) needsRerender.push({ node: s.node, rot: newRot });
+    });
     updatePageNumbers();
-    toast('Restored', '#64748b');
+    toast('Restored', '#435573');
+    // Re-paint any thumbnails whose rotation changed (canvas pixels must match the new angle)
+    for (const r of needsRerender) await renderThumbCanvas(r.node, r.rot);
 }
 
 /* ─── INIT ───────────────────────────────────────────── */
-(function init() {
+function init() {
     buildThemePanel();
     const tid = localStorage.getItem('pdforg_theme');
     applyTheme(THEMES.find(t=>t.id===tid)||THEMES[0]);
@@ -189,10 +206,14 @@ function restoreOrder(snap) {
     g('menu-extract-all').onclick = doExtractSelected;
     g('file-input').addEventListener('change', e => processFiles(e.target.files, null));
     g('btn-export').onclick     = doExport;
+    g('btn-add-top').onclick    = () => g('file-input').click();
 
-    /* View toggle */
-    g('btn-view-grid').onclick = () => setViewMode('grid');
-    g('btn-view-page').onclick = () => setViewMode('page');
+    /* Nav rail — swaps the workspace panel */
+    g('nav-organize').onclick = () => setNav('organize');
+    g('nav-reader').onclick   = () => setNav('reader');
+    g('nav-bkm').onclick      = () => setNav('bookmarks');
+    g('nav-search').onclick   = () => setNav('search');
+    g('nav-add').onclick      = () => g('file-input').click();
 
     /* Grid toolbar */
     g('btn-undo').onclick         = undo;
@@ -321,13 +342,12 @@ function restoreOrder(snap) {
 
     /* Drop PDF onto PV sidebar */
     const sidebar = g('pv-sidebar');
-    const dh = g('pv-drop-hint');
     ['dragenter','dragover'].forEach(ev => sidebar.addEventListener(ev, e => {
-        if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); dh.classList.add('drag-over'); }
+        if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); sidebar.classList.add('sb-drop-hover'); }
     }));
-    ['dragleave','dragend'].forEach(ev => sidebar.addEventListener(ev, () => dh.classList.remove('drag-over')));
+    ['dragleave','dragend'].forEach(ev => sidebar.addEventListener(ev, () => sidebar.classList.remove('sb-drop-hover')));
     sidebar.addEventListener('drop', e => {
-        e.preventDefault(); dh.classList.remove('drag-over');
+        e.preventDefault(); sidebar.classList.remove('sb-drop-hover');
         if (e.dataTransfer.files.length) processFiles(e.dataTransfer.files, null);
     });
 
@@ -436,6 +456,8 @@ function restoreOrder(snap) {
     }, { passive:false });
 
     document.body.classList.add('grid-view');
+    updateNavButtons();
+    updateToolStates();
     updateUndoRedoBtns();
 
     /* Global ctrl+scroll for page-view zoom
@@ -450,7 +472,7 @@ function restoreOrder(snap) {
         updatePvZoom();
         pvRender();
     }, { passive: false, capture: true });
-})();
+}
 
 /* ─── PANELS ─────────────────────────────────────────── */
 function togglePanel(id) {
@@ -481,10 +503,37 @@ function setViewMode(mode) {
         pvNav(pvIdx);
     }
 }
-function refreshViewBtns() {
-    const bg = g('btn-view-grid'); if(bg) bg.classList.toggle('active-view', viewMode==='grid');
-    const bp = g('btn-view-page'); if(bp) bp.classList.toggle('active-view', viewMode==='page');
+/* ─── NAV RAIL ───────────────────────────────────────── */
+const NAV_TITLES = {
+    organize:  { icon:'fa-grip',              label:'Organize' },
+    reader:    { icon:'fa-file-lines',        label:'Reader'   },
+    bookmarks: { icon:'fa-bookmark',          label:'Saved Pages' },
+    search:    { icon:'fa-magnifying-glass',  label:'Search'   },
+};
+function setNav(dest) {
+    navDest = dest;
+    if (dest === 'organize') {
+        setViewMode('grid');
+    } else {
+        // reader / bookmarks / search all live in page view
+        sbFilter = (dest === 'bookmarks') ? 'bookmarks' : 'all';
+        refreshPvTabs();
+        setViewMode('page');
+        if (!sbVisible) toggleSidebar(true);
+        if (dest === 'search') setTimeout(() => { const s = g('pv-search'); if (s) s.focus(); }, 60);
+    }
+    updateNavButtons();
 }
+function updateNavButtons() {
+    document.querySelectorAll('.rail-btn[data-nav]').forEach(b => {
+        b.classList.toggle('active', b.dataset.nav === navDest);
+    });
+    const meta = NAV_TITLES[navDest] || NAV_TITLES.organize;
+    const t = g('panel-title-text'); if (t) t.textContent = meta.label;
+    const ti = g('panel-title'); if (ti) { const ic = ti.querySelector('i'); if (ic) ic.className = 'fa-solid ' + meta.icon; }
+}
+/* Back-compat: some engine code calls refreshViewBtns() */
+function refreshViewBtns() { updateNavButtons(); }
 
 /* ─── SIDEBAR TOGGLE ─────────────────────────────────── */
 function toggleSidebar(show) {
@@ -506,8 +555,8 @@ function toggleBkmCurrent() {
 }
 function toggleBkmNode(thumb) {
     const pi = parseInt(thumb.dataset.pageIndex);
-    if (bookmarks.has(pi)) { bookmarks.delete(pi); toast('Bookmark removed','#94a3b8'); }
-    else                   { bookmarks.add(pi);    toast(`Page ${pi} bookmarked`,'#f59e0b'); }
+    if (bookmarks.has(pi)) { bookmarks.delete(pi); toast('Bookmark removed','#8a9bb5'); }
+    else                   { bookmarks.add(pi);    toast(`Page ${pi} bookmarked`,'#d97706'); }
     saveBkm();
     thumb.classList.toggle('bookmarked', bookmarks.has(pi));
     updateBkmUI();
@@ -836,7 +885,7 @@ async function pvRenderContinuous() {
         // page label
         const lbl = document.createElement('div');
         lbl.textContent = `Page ${thumb.dataset.pageIndex}`;
-        lbl.style.cssText = 'position:absolute;bottom:8px;right:10px;background:rgba(15,23,42,.75);color:white;font-size:10px;font-weight:800;padding:3px 8px;border-radius:6px;backdrop-filter:blur(4px);';
+        lbl.style.cssText = 'position:absolute;bottom:8px;right:10px;background:rgba(15,33,54,.82);color:white;font-size:10px;font-weight:800;padding:3px 8px;border-radius:5px;-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);';
         wrapper.appendChild(lbl);
         cont.appendChild(wrapper);
 
@@ -947,17 +996,10 @@ function pvJumpMatch() {
 /* ─── PV ACTIONS ─────────────────────────────────────── */
 async function pvRotate(deg) {
     const t=pvPages[pvIdx]; if(!t) return;
+    pushUndo();
     const rot=(parseInt(t.dataset.rotation||0)+deg+360)%360;
     t.dataset.rotation=rot;
-    if(pvPdfDocs[t.dataset.fileId]) {
-        const pg=await pvPdfDocs[t.dataset.fileId].getPage(parseInt(t.dataset.originalPageIndex));
-        // Use same scale as createThumb (.55) for consistent portrait/landscape sizing
-        const vp=pg.getViewport({scale:.55,rotation:rot});
-        const c=t.querySelector('canvas');
-        c.width=vp.width; c.height=vp.height;
-        c.style.width=''; c.style.height='';
-        await pg.render({canvasContext:c.getContext('2d'),viewport:vp}).promise;
-    }
+    await renderThumbCanvas(t, rot);
     pvRender();
     toast(`Page ${t.dataset.pageIndex} rotated ${deg>0?'right':'left'}`);
 }
@@ -988,9 +1030,9 @@ function pvDelete() {
     bookmarks.delete(pi); saveBkm();
     t.remove(); updatePageNumbers();
     pvPages=[...document.querySelectorAll('.thumb-item')];
-    if(!pvPages.length){setViewMode('grid');return;}
+    if(!pvPages.length){setNav('organize');return;}
     pvIdx=Math.max(0,pvIdx-1); pvNav(pvIdx);
-    toast(`Page ${pi} deleted`,'#f43f5e');
+    toast(`Page ${pi} deleted`,'#dc2626');
 }
 
 /* ─── PRINT ──────────────────────────────────────────── */
@@ -1059,7 +1101,7 @@ new Sortable(g('thumbnails-container'),{
         if(sel.length>1){
             const b=document.createElement('div');
             b.id='drag-badge';
-            b.style.cssText='position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:#f43f5e;color:white;font-size:12px;font-weight:800;padding:5px 12px;border-radius:999px;z-index:50;box-shadow:0 6px 16px rgba(244,63,94,.4);border:2px solid white;white-space:nowrap;pointer-events:none';
+            b.style.cssText='position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:#1d4ed8;color:white;font-size:12px;font-weight:800;padding:5px 12px;border-radius:8px;z-index:50;box-shadow:0 6px 16px rgba(29,78,216,.4);border:2px solid white;white-space:nowrap;pointer-events:none';
             b.innerHTML=`<i class="fa-solid fa-copy" style="margin-right:5px"></i>${sel.length} Pages`;
             e.item.appendChild(b);
             sel.forEach(el=>{if(el!==e.item)el.style.opacity='.3';});
@@ -1253,7 +1295,7 @@ async function createThumb(page,fileId,pageIndex){
 
     el.addEventListener('dblclick', ()=>{
         pvIdx=[...document.querySelectorAll('.thumb-item')].indexOf(el);
-        setViewMode('page');
+        setNav('reader');
     });
 
     return el;
@@ -1270,10 +1312,16 @@ function updatePageNumbers(){
     updateToolStates();
 }
 function updateToolStates(){
-    const has=document.querySelectorAll('.thumbnail-active').length>0;
+    const count=document.querySelectorAll('.thumbnail-active').length;
+    const has=count>0;
     ['btn-extract','btn-rotate-left','btn-rotate-right','btn-delete'].forEach(id=>{
         const b=g(id); if(b) b.disabled=!has;
     });
+    const ss=g('selection-status');
+    if(ss){
+        ss.textContent = has ? `${count} selected` : 'No selection';
+        ss.classList.toggle('has-sel', has);
+    }
 }
 
 /* ─── GRID ACTIONS ───────────────────────────────────── */
@@ -1286,21 +1334,33 @@ async function actionOnSelected(fn){
     updateToolStates();
 }
 
+/* Loads (and caches) the pdf.js document for a fileId — shared by thumb + page-view rendering */
+async function getPvDoc(fileId) {
+    if (!pvPdfDocs[fileId]) {
+        pvPdfDocs[fileId] = await pdfjsLib.getDocument(new Uint8Array(rawPdfs[fileId].slice(0))).promise;
+    }
+    return pvPdfDocs[fileId];
+}
+
+/* Re-renders a grid thumbnail's canvas at the given rotation (scale matches createThumb) */
+async function renderThumbCanvas(thumb, rotation) {
+    const doc = await getPvDoc(thumb.dataset.fileId);
+    const pg  = await doc.getPage(parseInt(thumb.dataset.originalPageIndex));
+    const vp  = pg.getViewport({scale:.55, rotation});
+    const c   = thumb.querySelector('canvas');
+    c.width = vp.width; c.height = vp.height;
+    // Reset inline styles so CSS (width:100%; height:auto) controls display
+    c.style.width=''; c.style.height='';
+    await pg.render({canvasContext:c.getContext('2d'),viewport:vp}).promise;
+}
+
 async function gridRotate(thumb,deg){
     const rot=(parseInt(thumb.dataset.rotation||0)+deg+360)%360;
     thumb.dataset.rotation=rot;
     const c=thumb.querySelector('canvas');
     c.style.opacity='.4';
-    try {
-        // Use same scale as createThumb (.55) so portrait/landscape dimensions are consistent
-        const pdf=await pdfjsLib.getDocument(new Uint8Array(rawPdfs[thumb.dataset.fileId].slice(0))).promise;
-        const pg=await pdf.getPage(parseInt(thumb.dataset.originalPageIndex));
-        const vp=pg.getViewport({scale:.55, rotation:rot});
-        c.width=vp.width; c.height=vp.height;
-        // Reset inline styles so CSS (width:100%; height:auto) controls display
-        c.style.width=''; c.style.height='';
-        await pg.render({canvasContext:c.getContext('2d'),viewport:vp}).promise;
-    } finally {c.style.opacity='1';}
+    try { await renderThumbCanvas(thumb, rot); }
+    finally {c.style.opacity='1';}
 }
 
 function doDelete(){
@@ -1355,3 +1415,9 @@ async function doExport(){
     finally{g('btn-export').innerHTML=orig; g('btn-export').disabled=false;}
     closeAllPanels();
 }
+
+/* ─── BOOT ───────────────────────────────────────────────
+   Run init LAST — after every top-level const/function (e.g.
+   NAV_TITLES) is defined — to avoid a temporal-dead-zone
+   ReferenceError during startup. */
+init();
