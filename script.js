@@ -633,7 +633,7 @@ function pvBuildSidebar() {
 
     // Sortable reorder (only in 'all' mode)
     if (window._pvSortable) { try { window._pvSortable.destroy(); } catch{} }
-    if (sbFilter === 'all') {
+    if (sbFilter === 'all' && typeof Sortable !== 'undefined') {
         window._pvSortable = new Sortable(g('pv-thumb-list'), {
             animation: 150,
             filter: '#pv-empty-bkm, .pv-insert-line',
@@ -1089,7 +1089,9 @@ function updateGridZoom(v) {
 }
 
 /* ─── SORTABLE ───────────────────────────────────────── */
-new Sortable(g('thumbnails-container'),{
+/* guarded: if the CDN is unreachable, keep the rest of the app alive (drag-reorder off) */
+if (typeof Sortable === 'undefined') console.error('SortableJS failed to load — drag to reorder is disabled.');
+else new Sortable(g('thumbnails-container'),{
     animation:150, ghostClass:'sortable-ghost', dragClass:'sortable-drag',
     filter:'#selection-box',
     onStart(e){
